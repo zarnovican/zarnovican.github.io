@@ -1,0 +1,326 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Braňo Žarnovičan's blog</title><link>http://zarnovican.github.io/</link><description></description><atom:link href="http://zarnovican.github.io/feeds/all.rss.xml" rel="self"></atom:link><lastBuildDate>Tue, 10 Nov 2015 00:00:00 +0100</lastBuildDate><item><title>Run cloud image without cloud</title><link>http://zarnovican.github.io/2015/11/10/run-cloud-image-without-cloud/</link><description>&lt;div class="toc"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#for-the-impatient"&gt;For the impatient&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#motivation"&gt;Motivation&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#before-you-begin"&gt;Before You Begin&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#preparation"&gt;Preparation&lt;/a&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href="#install-qemulibvirt"&gt;Install qemu/libvirt&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#configure-network"&gt;Configure network&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#configure-storage"&gt;Configure storage&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#create-minimal-config-drive"&gt;Create minimal config drive&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#create-vm"&gt;Create VM&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;a href="#and-we-are-done"&gt;And we are done..&lt;/a&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href="#what-is-vms-base-image"&gt;What is VM's base image ?&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#re-image-the-vm"&gt;Re-image the VM&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#troubleshooting-cloud-init"&gt;Troubleshooting cloud-init&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;a href="#extras"&gt;Extras&lt;/a&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href="#static-host-ssh-key"&gt;Static host ssh key&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;h2 id="for-the-impatient"&gt;For the impatient&lt;/h2&gt;
+&lt;p&gt;Modern cloud images have &lt;code&gt;cloud-init&lt;/code&gt; pre-installed. You can feed cloud-init bootstrap
+information via iso image attached as cdrom device, so called &lt;em&gt;config drive&lt;/em&gt;.
+There, you can store 1) meta-data as if they were provided by cloud, 2) user-data as if they were
+specified on VM creation.&lt;/p&gt;
+&lt;p&gt;For the minimal setup, you only need the meta-data with the public key.
+Here is how the iso content should look like:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;.
+└── openstack
+    └── latest
+        └── meta_data.json
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Where &lt;code&gt;meta_data.json&lt;/code&gt; looks like:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;{
+    &lt;span style="color: #008000; font-weight: bold"&gt;&amp;quot;public_keys&amp;quot;&lt;/span&gt;: {
+        &lt;span style="color: #008000; font-weight: bold"&gt;&amp;quot;&amp;lt;arbitrary-key-name&amp;gt;&amp;quot;&lt;/span&gt;: &lt;span style="color: #BA2121"&gt;&amp;quot;ssh-rsa &amp;lt;public-key&amp;gt;\n&amp;quot;&lt;/span&gt;
+    },
+    &lt;span style="color: #008000; font-weight: bold"&gt;&amp;quot;uuid&amp;quot;&lt;/span&gt;: &lt;span style="color: #BA2121"&gt;&amp;quot;&amp;lt;any-uuid-value&amp;gt;&amp;quot;&lt;/span&gt;
+}
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;At boot time, public key is injected into cloud user's &lt;code&gt;authorized_keys&lt;/code&gt; file (eg. "centos" user for CentOS cloud image).&lt;/p&gt;
+&lt;h2 id="motivation"&gt;Motivation&lt;/h2&gt;
+&lt;p&gt;Installing VM from installation media ? Hell, no!
+At least not if you intend to drop &amp;amp; re-create your VM repeatedly.
+You have DHCP/PXE/Kickstart to automate it, you know..
+Well, ok, but not if you need something working.. like now.&lt;/p&gt;
+&lt;p&gt;Vagrant ?
+Weeeell, maybe the config written in Ruby is not your thing.
+Or the image you want to run is not public and you have only Qcow2 version and no Vagrant.&lt;/p&gt;
+&lt;p&gt;Or simply, you don't intend to test software on your VM, rather deployment automation (Ansible, Puppet, ..)
+In which case, you probably want to test it on exactly the same image as in the cloud.&lt;/p&gt;
+&lt;p&gt;(Or you just want to do it by hand for the sake of it)&lt;/p&gt;
+&lt;h2 id="before-you-begin"&gt;Before You Begin&lt;/h2&gt;
+&lt;p&gt;&lt;strong&gt;Problem&lt;/strong&gt;: Openstack images have no default root password or password-less account.
+You &lt;em&gt;can&lt;/em&gt; run the image as-is, but you won't be able to login.
+That's where &lt;em&gt;config drive&lt;/em&gt; comes in.
+Simply put, it's an iso image attached as cdrom to the VM.&lt;/p&gt;
+&lt;p&gt;I did enhance this guide a bit to allow &lt;em&gt;sharing&lt;/em&gt; of the same base image by several instances.
+This step is completely optional.
+It won't affect the config drive if you skip it.&lt;/p&gt;
+&lt;p&gt;I'll be using Fedora as host, but you should be able to adapt the examples easily to your distro.&lt;/p&gt;
+&lt;p&gt;It does not matter what image you want to run in the guest VM as long as
+it has cloud-init pre-installed.&lt;/p&gt;
+&lt;h2 id="preparation"&gt;Preparation&lt;/h2&gt;
+&lt;h3 id="install-qemulibvirt"&gt;Install qemu/libvirt&lt;/h3&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #408080; font-style: italic"&gt;# install packages from &amp;quot;virtualization&amp;quot; group&lt;/span&gt;
+sudo dnf install @virtualization -y
+
+&lt;span style="color: #408080; font-style: italic"&gt;# start libvirtd&lt;/span&gt;
+sudo systemctl start libvirtd
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;h3 id="configure-network"&gt;Configure network&lt;/h3&gt;
+&lt;p&gt;VM running in the cloud receives IP address and hostname from the cloud provider via DHCP.
+In your libvirt setup, VM would get a random IP from the pool and NO hostname.
+Let's fix that first..&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #408080; font-style: italic"&gt;# edit &amp;#39;default&amp;#39; network and add static DHCP&lt;/span&gt;
+sudo virsh net-edit default
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Snippet that should be added inside &lt;code&gt;&amp;lt;dhcp&amp;gt;&lt;/code&gt; tag (I'm assuming that your default network
+has the same range as mine - 192.168.122.0/24):&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #008000; font-weight: bold"&gt;&amp;lt;dhcp&amp;gt;&lt;/span&gt;
+  ...
+  &lt;span style="color: #008000; font-weight: bold"&gt;&amp;lt;host&lt;/span&gt; &lt;span style="color: #7D9029"&gt;mac=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;#39;52:54:00:00:00:11&amp;#39;&lt;/span&gt; &lt;span style="color: #7D9029"&gt;name=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;#39;vm1&amp;#39;&lt;/span&gt; &lt;span style="color: #7D9029"&gt;ip=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;#39;192.168.122.11&amp;#39;&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold"&gt;/&amp;gt;&lt;/span&gt;
+  &lt;span style="color: #008000; font-weight: bold"&gt;&amp;lt;host&lt;/span&gt; &lt;span style="color: #7D9029"&gt;mac=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;#39;52:54:00:00:00:12&amp;#39;&lt;/span&gt; &lt;span style="color: #7D9029"&gt;name=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;#39;vm2&amp;#39;&lt;/span&gt; &lt;span style="color: #7D9029"&gt;ip=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;#39;192.168.122.12&amp;#39;&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold"&gt;/&amp;gt;&lt;/span&gt;
+  &lt;span style="color: #008000; font-weight: bold"&gt;&amp;lt;host&lt;/span&gt; &lt;span style="color: #7D9029"&gt;mac=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;#39;52:54:00:00:00:13&amp;#39;&lt;/span&gt; &lt;span style="color: #7D9029"&gt;name=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;#39;vm3&amp;#39;&lt;/span&gt; &lt;span style="color: #7D9029"&gt;ip=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;#39;192.168.122.13&amp;#39;&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold"&gt;/&amp;gt;&lt;/span&gt;
+  &lt;span style="color: #008000; font-weight: bold"&gt;&amp;lt;host&lt;/span&gt; &lt;span style="color: #7D9029"&gt;mac=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;#39;52:54:00:00:00:14&amp;#39;&lt;/span&gt; &lt;span style="color: #7D9029"&gt;name=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;#39;vm4&amp;#39;&lt;/span&gt; &lt;span style="color: #7D9029"&gt;ip=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;#39;192.168.122.14&amp;#39;&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold"&gt;/&amp;gt;&lt;/span&gt;
+&lt;span style="color: #008000; font-weight: bold"&gt;&amp;lt;/dhcp&amp;gt;&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;div class="admonition note"&gt;
+&lt;p class="admonition-title"&gt;Why static MAC ?&lt;/p&gt;
+&lt;p&gt;The MAC address will later be used when creating the VM.
+It is IMHO easier to &lt;em&gt;provide&lt;/em&gt; MAC to VM, rather than &lt;em&gt;fetch&lt;/em&gt; (randomly generated) MAC from VM.
+Also, you only need to define this mapping &lt;em&gt;once&lt;/em&gt;, no matter how many VMs you intend
+to run.&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;Apply changes by restarting &lt;code&gt;dnsmasq&lt;/code&gt;:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;sudo virsh net-destroy default
+sudo virsh net-start   default
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;(optional) You might want to add your VMs to &lt;code&gt;/etc/hosts&lt;/code&gt; file:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;...
+192.168.122.11  vm1
+192.168.122.12  vm2
+192.168.122.13  vm3
+192.168.122.14  vm4
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;h3 id="configure-storage"&gt;Configure storage&lt;/h3&gt;
+&lt;p&gt;OK, now is the time to decide which image you want to run inside the guest.
+Decent distros provide pre-built Qcow2 images ready to be imported to Openstack.
+Here is a good source: &lt;a href="http://docs.openstack.org/image-guide/content/ch_obtaining_images.html"&gt;"Get images" in Openstack's doc&lt;/a&gt;.
+Download one of them..&lt;/p&gt;
+&lt;p&gt;I will go for CentOS for now..&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;mkdir ~/virt
+&lt;span style="color: #008000"&gt;cd&lt;/span&gt; ~/virt
+wget http://cloud.centos.org/centos/7/images/CentOS-7-x86_64-GenericCloud.qcow2.xz
+xz -d CentOS-7-x86_64-GenericCloud.qcow2.xz
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Create copy-on-write storage for VMs with pristine CentOS as read-only backing-store:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #008000; font-weight: bold"&gt;for&lt;/span&gt; VMID in &lt;span style="color: #666666"&gt;1&lt;/span&gt; &lt;span style="color: #666666"&gt;2&lt;/span&gt; &lt;span style="color: #666666"&gt;3&lt;/span&gt; 4; &lt;span style="color: #008000; font-weight: bold"&gt;do&lt;/span&gt;
+    qemu-img create -f qcow2 -o &lt;span style="color: #19177C"&gt;backing_file&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;CentOS-7-x86_64-GenericCloud.qcow2 vm&lt;span style="color: #BB6688; font-weight: bold"&gt;${&lt;/span&gt;&lt;span style="color: #19177C"&gt;VMID&lt;/span&gt;&lt;span style="color: #BB6688; font-weight: bold"&gt;}&lt;/span&gt;.qcow2
+&lt;span style="color: #008000; font-weight: bold"&gt;done&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;div class="admonition note"&gt;
+&lt;p class="admonition-title"&gt;Qcow2 size&lt;/p&gt;
+&lt;p&gt;Note, I did not specify the device size.
+By default, VM will get 8GB of "sparse" storage.&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;In this example setup, all four VMs share the same base (CentOS) image.
+Note that blank VM occupy only 200kB:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #19177C"&gt;$ &lt;/span&gt;du -shc CentOS-7-x86_64-GenericCloud.qcow2 vm?.qcow2
+959M    CentOS-7-x86_64-GenericCloud.qcow2
+196K    vm1.qcow2
+196K    vm2.qcow2
+196K    vm3.qcow2
+196K    vm4.qcow2
+960M    total
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;h3 id="create-minimal-config-drive"&gt;Create minimal config drive&lt;/h3&gt;
+&lt;p&gt;This is the &lt;em&gt;important&lt;/em&gt; part.
+Config drive is the way to pass information to the VM, "outside" of disk image.
+We will create a &lt;em&gt;minimal&lt;/em&gt; iso image that will inject just the ssh public key.
+For the full documentation, refer to &lt;a href="http://docs.openstack.org/user-guide/cli_config_drive.html"&gt;Openstack's "Store metadata on a configuration drive"&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;The content of the ISO image (naturally, fill-in your public key):&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;mkdir -p config-drive/openstack/latest
+cat &amp;gt;config-drive/openstack/latest/meta_data.json &lt;span style="color: #BA2121"&gt;&amp;lt;&amp;lt;&amp;#39;EOF&amp;#39;&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;{&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    &amp;quot;public_keys&amp;quot;: {&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;        &amp;quot;bza&amp;quot;: &amp;quot;ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEA6rCBkwpHYS073jjOMEUrHAAtA7ovYgBv4FIdb+oD5Yn7UEffzp0fLxhJDkv9hqp3uYk6T/N++HUIeI8oFcfZ1gM00LB70Uv5IkCAy9SztvltOK781NQD1urU8i5j1l9cYLHhyYnGmM9McM77+ZY8IiPSl9jznnRquW7925UrO40= Brano Zarnovican\n&amp;quot;&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    },&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    &amp;quot;uuid&amp;quot;: &amp;quot;83679162-1378-4288-a2d4-70e13ec132aa&amp;quot;&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;}&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;EOF&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;div class="admonition warning"&gt;
+&lt;p class="admonition-title"&gt;Valid json&lt;/p&gt;
+&lt;p&gt;Be careful to provide a valid json file.
+Otherwise, you might waste a lot of time on troubleshooting.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="admonition note"&gt;
+&lt;p class="admonition-title"&gt;What's that UUID for?&lt;/p&gt;
+&lt;p&gt;That is a mandatory field in Openstack meta_data.json.
+It's ok to have some hard-coded value for your local VM.
+It is even ok to share the same config drive (and UUID value) for all your VMs.&lt;/p&gt;
+&lt;p&gt;Having just the "public_keys" and "uuid" field may be breaking some meta-data standard.
+It is working, though.&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;Create the ISO image:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;mkisofs -R -o config-drive.iso config-drive/
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;h3 id="create-vm"&gt;Create VM&lt;/h3&gt;
+&lt;p&gt;Time to tie it all together..&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #19177C"&gt;VMID&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;1
+sudo virt-install --name vm&lt;span style="color: #BB6688; font-weight: bold"&gt;${&lt;/span&gt;&lt;span style="color: #19177C"&gt;VMID&lt;/span&gt;&lt;span style="color: #BB6688; font-weight: bold"&gt;}&lt;/span&gt; --memory &lt;span style="color: #666666"&gt;1024&lt;/span&gt; --vcpus &lt;span style="color: #666666"&gt;1&lt;/span&gt; --import &lt;span style="color: #BB6622; font-weight: bold"&gt;\&lt;/span&gt;
+    --disk vm&lt;span style="color: #BB6688; font-weight: bold"&gt;${&lt;/span&gt;&lt;span style="color: #19177C"&gt;VMID&lt;/span&gt;&lt;span style="color: #BB6688; font-weight: bold"&gt;}&lt;/span&gt;.qcow2,bus&lt;span style="color: #666666"&gt;=&lt;/span&gt;virtio &lt;span style="color: #BB6622; font-weight: bold"&gt;\&lt;/span&gt;
+    --disk config-drive.iso,device&lt;span style="color: #666666"&gt;=&lt;/span&gt;cdrom,perms&lt;span style="color: #666666"&gt;=&lt;/span&gt;ro &lt;span style="color: #BB6622; font-weight: bold"&gt;\&lt;/span&gt;
+    --network &lt;span style="color: #19177C"&gt;network&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;default,model&lt;span style="color: #666666"&gt;=&lt;/span&gt;virtio,mac&lt;span style="color: #666666"&gt;=&lt;/span&gt;52:54:00:00:00:1&lt;span style="color: #BB6688; font-weight: bold"&gt;${&lt;/span&gt;&lt;span style="color: #19177C"&gt;VMID&lt;/span&gt;&lt;span style="color: #BB6688; font-weight: bold"&gt;}&lt;/span&gt; &lt;span style="color: #BB6622; font-weight: bold"&gt;\&lt;/span&gt;
+    --noautoconsole
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;div class="admonition tip"&gt;
+&lt;p class="admonition-title"&gt;virt-manager&lt;/p&gt;
+&lt;p&gt;Alternatively, you can create the VM using virt-manager.
+Just remember to:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;import existing qcow2 image (vmX.qcow2)&lt;/li&gt;
+&lt;li&gt;change the MAC address on network interface to 52:54:00:00:00:1X&lt;/li&gt;
+&lt;li&gt;add IDE CDROM with config-drive.iso&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;h2 id="and-we-are-done"&gt;And we are done..&lt;/h2&gt;
+&lt;p&gt;If all worked well, you should be able to login..&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;$ ssh centos@vm1
+The authenticity of host &amp;#39;vm1 (192.168.122.11)&amp;#39; can&amp;#39;t be established.
+ECDSA key fingerprint is SHA256:JrczAJifE04hx+NUF4yTWVHA/6hh+XqELCViluVEW6Q.
+ECDSA key fingerprint is MD5:96:f0:85:88:53:3a:c5:47:c3:d2:3e:d8:a6:c1:c6:ff.
+Are you sure you want to continue connecting (yes/no)? yes
+Warning: Permanently added &amp;#39;vm1,192.168.122.11&amp;#39; (ECDSA) to the list of known hosts.
+[centos@vm1 ~]$
+[centos@vm1 ~]$ sudo -i
+[root@vm1 ~]#
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;h3 id="what-is-vms-base-image"&gt;What is VM's base image ?&lt;/h3&gt;
+&lt;p&gt;To query Qcow2 file..&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #19177C"&gt;$ &lt;/span&gt;qemu-img info vm1.qcow2
+image: vm1.qcow2
+file format: qcow2
+virtual size: 8.0G &lt;span style="color: #666666"&gt;(8589934592&lt;/span&gt; bytes&lt;span style="color: #666666"&gt;)&lt;/span&gt;
+disk size: 70M
+cluster_size: 65536
+backing file: CentOS-7-x86_64-GenericCloud.qcow2
+Format specific information:
+    compat: 1.1
+    lazy refcounts: &lt;span style="color: #008000"&gt;false&lt;/span&gt;
+&lt;span style="color: #008000"&gt;    &lt;/span&gt;refcount bits: 16
+    corrupt: &lt;span style="color: #008000"&gt;false&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;h3 id="re-image-the-vm"&gt;Re-image the VM&lt;/h3&gt;
+&lt;p&gt;Throw away VM's data and start again from pristine image.&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #19177C"&gt;VMID&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;1
+
+&lt;span style="color: #408080; font-style: italic"&gt;# stop the instance, ok to be &amp;quot;ungraceful&amp;quot; at this point&lt;/span&gt;
+sudo virsh destroy vm&lt;span style="color: #BB6688; font-weight: bold"&gt;${&lt;/span&gt;&lt;span style="color: #19177C"&gt;VMID&lt;/span&gt;&lt;span style="color: #BB6688; font-weight: bold"&gt;}&lt;/span&gt;
+
+&lt;span style="color: #408080; font-style: italic"&gt;# destroy and recreate its storage&lt;/span&gt;
+&lt;span style="color: #008000"&gt;cd&lt;/span&gt; ~/virt
+rm -f vm&lt;span style="color: #BB6688; font-weight: bold"&gt;${&lt;/span&gt;&lt;span style="color: #19177C"&gt;VMID&lt;/span&gt;&lt;span style="color: #BB6688; font-weight: bold"&gt;}&lt;/span&gt;.qcow2
+qemu-img create -f qcow2 -o &lt;span style="color: #19177C"&gt;backing_file&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;CentOS-7-x86_64-GenericCloud.qcow2 vm&lt;span style="color: #BB6688; font-weight: bold"&gt;${&lt;/span&gt;&lt;span style="color: #19177C"&gt;VMID&lt;/span&gt;&lt;span style="color: #BB6688; font-weight: bold"&gt;}&lt;/span&gt;.qcow2
+
+&lt;span style="color: #408080; font-style: italic"&gt;# start the instance again&lt;/span&gt;
+sudo virsh start vm&lt;span style="color: #BB6688; font-weight: bold"&gt;${&lt;/span&gt;&lt;span style="color: #19177C"&gt;VMID&lt;/span&gt;&lt;span style="color: #BB6688; font-weight: bold"&gt;}&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Note, that you don't need to undefine the whole VM.
+Destroy or shutdown is enough.
+VM will retain hw configuration, network MAC address, etc, but it will loose all data.
+You can also switch to a different "base image" while VM is down.&lt;/p&gt;
+&lt;h3 id="troubleshooting-cloud-init"&gt;Troubleshooting cloud-init&lt;/h3&gt;
+&lt;p&gt;This is tricky.
+Something did not work, and now you are not able to login to the VM to have a look at things.
+You can still mount the image on host OS and poke around (as root).&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #408080; font-style: italic"&gt;# mount&lt;/span&gt;
+modprobe nbd &lt;span style="color: #19177C"&gt;max_part&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;63
+qemu-nbd -c /dev/nbd0 /home/user/virt/vm1.qcow2
+mount /dev/nbd0p1 /mnt/
+
+&lt;span style="color: #408080; font-style: italic"&gt;# umount&lt;/span&gt;
+umount /mnt
+qemu-nbd -d /dev/nbd0
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Just make sure you don't have it mounted on host and guest at the same time..
+Cloud-init log file will be in &lt;code&gt;/mnt/var/log/cloud-init.log&lt;/code&gt;,
+but you might need to first increase verbosity in &lt;code&gt;/mnt/etc/cloud/cloud.cfg.d/*logging.cfg&lt;/code&gt;&lt;/p&gt;
+&lt;h2 id="extras"&gt;Extras&lt;/h2&gt;
+&lt;h3 id="static-host-ssh-key"&gt;Static host ssh key&lt;/h3&gt;
+&lt;p&gt;It's quite annoying to update &lt;code&gt;known_hosts&lt;/code&gt; file every time I re-image the VM.
+One way to fix this is to "give" VM static host keys at first boot via cloud-init.
+Its config is in cloud's "user data".&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;cat &amp;gt;config-drive/openstack/latest/user_data &lt;span style="color: #BA2121"&gt;&amp;lt;&amp;lt;&amp;#39;EOF&amp;#39;&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;#cloud-config&lt;/span&gt;
+
+&lt;span style="color: #BA2121"&gt;ssh_keys:&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;  rsa_private: |&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    -----BEGIN RSA PRIVATE KEY-----&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    MIIBxwIBAAJhAKD0YSHy73nUgysO13XsJmd4fHiFyQ+00R7VVu2iV9Qcon2LZS/x&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    1cydPZ4pQpfjEha6WxZ6o8ci/Ea/w0n+0HGPwaxlEG2Z9inNtj3pgFrYcRztfECb&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    1j6HCibZbAzYtwIBIwJgO8h72WjcmvcpZ8OvHSvTwAguO2TkR6mPgHsgSaKy6GJo&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    PUJnaZRWuba/HX0KGyhz19nPzLpzG5f0fYahlMJAyc13FV7K6kMBPXTRR6FxgHEg&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    L0MPC7cdqAwOVNcPY6A7AjEA1bNaIjOzFN2sfZX0j7OMhQuc4zP7r80zaGc5oy6W&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    p58hRAncFKEvnEq2CeL3vtuZAjEAwNBHpbNsBYTRPCHM7rZuG/iBtwp8Rxhc9I5w&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    ixvzMgi+HpGLWzUIBS+P/XhekIjPAjA285rVmEP+DR255Ls65QbgYhJmTzIXQ2T9&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    luLvcmFBC6l35Uc4gTgg4ALsmXLn71MCMGMpSWspEvuGInayTCL+vEjmNBT+FAdO&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    W7D4zCpI43jRS9U06JVOeSc9CDk2lwiA3wIwCTB/6uc8Cq85D9YqpM10FuHjKpnP&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    REPPOyrAspdeOAV+6VKRavstea7+2DZmSUgE&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    -----END RSA PRIVATE KEY-----&lt;/span&gt;
+
+&lt;span style="color: #BA2121"&gt;  rsa_public: ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAGEAoPRhIfLvedSDKw7XdewmZ3h8eIXJD7TRHtVW7aJX1ByifYtlL/HVzJ09nilCl+MSFrpbFnqjxyL8Rr/DSf7QcY/BrGUQbZn2Kc22PemAWthxHO18QJvWPocKJtlsDNi3 smoser@localhost&lt;/span&gt;
+
+&lt;span style="color: #BA2121"&gt;  ecdsa_private: |&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    -----BEGIN EC PRIVATE KEY-----&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    MHcCAQEEIIjH3F2tInhb1SpODeeis+7XZexdJQAjVCDUVkfQTjYyoAoGCCqGSM49&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    AwEHoUQDQgAE9cHv9N9K4UF6GyGlHNR82ylKiv715LBZuXOyxezAL+FFiTMo6/qZ&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    y+6rMEJYdkWxqXz4iKkiU/rgmCWvBfC1FQ==&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;    -----END EC PRIVATE KEY-----&lt;/span&gt;
+
+&lt;span style="color: #BA2121"&gt;  ecdsa_public: ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBPXB7/TfSuFBehshpRzUfNspSor+9eSwWblzssXswC/hRYkzKOv6mcvuqzBCWHZFsal8+IipIlP64JglrwXwtRU=&lt;/span&gt;
+
+&lt;span style="color: #BA2121"&gt;EOF&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;</description><dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">Braňo Žarnovičan</dc:creator><pubDate>Tue, 10 Nov 2015 00:00:00 +0100</pubDate><guid>tag:zarnovican.github.io,2015-11-10:2015/11/10/run-cloud-image-without-cloud/</guid><category>libvirt</category><category>cloud-init</category><category>config drive</category><category>qcow2</category></item></channel></rss>

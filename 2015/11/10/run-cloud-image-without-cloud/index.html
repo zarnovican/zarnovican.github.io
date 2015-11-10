@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en"
+>
+<head>
+    <title>Run cloud image without cloud - Braňo Žarnovičan's blog</title>
+    <!-- Using the latest rendering mode for IE -->
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+
+
+<link rel="canonical" href="http://zarnovican.github.io/2015/11/10/run-cloud-image-without-cloud/">
+
+        <meta name="author" content="Braňo Žarnovičan" />
+        <meta name="keywords" content="libvirt,cloud-init,config drive,qcow2" />
+        <meta name="description" content="How to run Linux Openstack image (Qcow2) on your machine without having any Openstack installed. The trick is to use config drive to inject ssh keys into VM." />
+
+        <meta property="og:site_name" content="Braňo Žarnovičan's blog" />
+        <meta property="og:type" content="article"/>
+        <meta property="og:title" content="Run cloud image without cloud"/>
+        <meta property="og:url" content="http://zarnovican.github.io/2015/11/10/run-cloud-image-without-cloud/"/>
+        <meta property="og:description" content="How to run Linux Openstack image (Qcow2) on your machine without having any Openstack installed. The trick is to use config drive to inject ssh keys into VM."/>
+        <meta property="article:published_time" content="2015-11-10" />
+            <meta property="article:section" content="Tech" />
+            <meta property="article:tag" content="libvirt" />
+            <meta property="article:tag" content="cloud-init" />
+            <meta property="article:tag" content="config drive" />
+            <meta property="article:tag" content="qcow2" />
+            <meta property="article:author" content="Braňo Žarnovičan" />
+
+
+    <!-- Bootstrap -->
+        <link rel="stylesheet" href="http://zarnovican.github.io/theme/css/bootstrap.flatly.min.css" type="text/css"/>
+    <link href="http://zarnovican.github.io/theme/css/font-awesome.min.css" rel="stylesheet">
+
+    <link href="http://zarnovican.github.io/theme/css/pygments/native.css" rel="stylesheet">
+    <link rel="stylesheet" href="http://zarnovican.github.io/theme/css/style.css" type="text/css"/>
+        <link href="http://zarnovican.github.io/static/custom.css" rel="stylesheet">
+
+        <link href="http://zarnovican.github.io/feeds/all.atom.xml" type="application/atom+xml" rel="alternate"
+              title="Braňo Žarnovičan's blog ATOM Feed"/>
+        <link href="http://zarnovican.github.io/feeds/all.rss.xml" type="application/rss+xml" rel="alternate"
+              title="Braňo Žarnovičan's blog RSS Feed"/>
+
+</head>
+<body>
+
+<div class="navbar navbar-default navbar-fixed-top" role="navigation">
+	<div class="container">
+        <div class="navbar-header">
+            <button type="button" class="navbar-toggle" data-toggle="collapse" data-target=".navbar-ex1-collapse">
+                <span class="sr-only">Toggle navigation</span>
+                <span class="icon-bar"></span>
+                <span class="icon-bar"></span>
+                <span class="icon-bar"></span>
+            </button>
+            <a href="http://zarnovican.github.io/" class="navbar-brand">
+Braňo Žarnovičan's blog            </a>
+        </div>
+        <div class="collapse navbar-collapse navbar-ex1-collapse">
+            <ul class="nav navbar-nav">
+            </ul>
+            <ul class="nav navbar-nav navbar-right">
+              <li><a href="http://zarnovican.github.io/archives.html"><i class="fa fa-th-list"></i><span class="icon-label">Archives</span></a></li>
+            </ul>
+        </div>
+        <!-- /.navbar-collapse -->
+    </div>
+</div> <!-- /.navbar -->
+<!-- Banner -->
+<!-- End Banner -->
+<div class="container">
+    <div class="row">
+        <div class="col-sm-9">
+
+    <section id="content">
+        <article>
+            <header class="page-header">
+                <h1>
+                    <a href="http://zarnovican.github.io/2015/11/10/run-cloud-image-without-cloud/"
+                       rel="bookmark"
+                       title="Permalink to Run cloud image without cloud">
+                        Run cloud image without cloud
+                    </a>
+                </h1>
+            </header>
+            <div class="entry-content">
+                <div class="panel">
+                    <div class="panel-body">
+<footer class="post-info">
+    <span class="label label-default">Date</span>
+    <span class="published">
+        <i class="fa fa-calendar"></i><time datetime="2015-11-10T00:00:00+01:00"> Tue 10 November 2015</time>
+    </span>
+
+
+
+<span class="label label-default">Tags</span>
+	<a href="http://zarnovican.github.io/tag/libvirt.html">libvirt</a>
+        /
+	<a href="http://zarnovican.github.io/tag/cloud-init.html">cloud-init</a>
+        /
+	<a href="http://zarnovican.github.io/tag/config-drive.html">config drive</a>
+        /
+	<a href="http://zarnovican.github.io/tag/qcow2.html">qcow2</a>
+    
+</footer><!-- /.post-info -->                    </div>
+                </div>
+                <div class="toc">
+<ul>
+<li><a href="#for-the-impatient">For the impatient</a></li>
+<li><a href="#motivation">Motivation</a></li>
+<li><a href="#before-you-begin">Before You Begin</a></li>
+<li><a href="#preparation">Preparation</a><ul>
+<li><a href="#install-qemulibvirt">Install qemu/libvirt</a></li>
+<li><a href="#configure-network">Configure network</a></li>
+<li><a href="#configure-storage">Configure storage</a></li>
+<li><a href="#create-minimal-config-drive">Create minimal config drive</a></li>
+<li><a href="#create-vm">Create VM</a></li>
+</ul>
+</li>
+<li><a href="#and-we-are-done">And we are done..</a><ul>
+<li><a href="#what-is-vms-base-image">What is VM's base image ?</a></li>
+<li><a href="#re-image-the-vm">Re-image the VM</a></li>
+<li><a href="#troubleshooting-cloud-init">Troubleshooting cloud-init</a></li>
+</ul>
+</li>
+<li><a href="#extras">Extras</a><ul>
+<li><a href="#static-host-ssh-key">Static host ssh key</a></li>
+</ul>
+</li>
+</ul>
+</div>
+<h2 id="for-the-impatient">For the impatient</h2>
+<p>Modern cloud images have <code>cloud-init</code> pre-installed. You can feed cloud-init bootstrap
+information via iso image attached as cdrom device, so called <em>config drive</em>.
+There, you can store 1) meta-data as if they were provided by cloud, 2) user-data as if they were
+specified on VM creation.</p>
+<p>For the minimal setup, you only need the meta-data with the public key.
+Here is how the iso content should look like:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%">.
+└── openstack
+    └── latest
+        └── meta_data.json
+</pre></div>
+
+
+<p>Where <code>meta_data.json</code> looks like:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%">{
+    <span style="color: #008000; font-weight: bold">&quot;public_keys&quot;</span>: {
+        <span style="color: #008000; font-weight: bold">&quot;&lt;arbitrary-key-name&gt;&quot;</span>: <span style="color: #BA2121">&quot;ssh-rsa &lt;public-key&gt;\n&quot;</span>
+    },
+    <span style="color: #008000; font-weight: bold">&quot;uuid&quot;</span>: <span style="color: #BA2121">&quot;&lt;any-uuid-value&gt;&quot;</span>
+}
+</pre></div>
+
+
+<p>At boot time, public key is injected into cloud user's <code>authorized_keys</code> file (eg. "centos" user for CentOS cloud image).</p>
+<h2 id="motivation">Motivation</h2>
+<p>Installing VM from installation media ? Hell, no!
+At least not if you intend to drop &amp; re-create your VM repeatedly.
+You have DHCP/PXE/Kickstart to automate it, you know..
+Well, ok, but not if you need something working.. like now.</p>
+<p>Vagrant ?
+Weeeell, maybe the config written in Ruby is not your thing.
+Or the image you want to run is not public and you have only Qcow2 version and no Vagrant.</p>
+<p>Or simply, you don't intend to test software on your VM, rather deployment automation (Ansible, Puppet, ..)
+In which case, you probably want to test it on exactly the same image as in the cloud.</p>
+<p>(Or you just want to do it by hand for the sake of it)</p>
+<h2 id="before-you-begin">Before You Begin</h2>
+<p><strong>Problem</strong>: Openstack images have no default root password or password-less account.
+You <em>can</em> run the image as-is, but you won't be able to login.
+That's where <em>config drive</em> comes in.
+Simply put, it's an iso image attached as cdrom to the VM.</p>
+<p>I did enhance this guide a bit to allow <em>sharing</em> of the same base image by several instances.
+This step is completely optional.
+It won't affect the config drive if you skip it.</p>
+<p>I'll be using Fedora as host, but you should be able to adapt the examples easily to your distro.</p>
+<p>It does not matter what image you want to run in the guest VM as long as
+it has cloud-init pre-installed.</p>
+<h2 id="preparation">Preparation</h2>
+<h3 id="install-qemulibvirt">Install qemu/libvirt</h3>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%"><span style="color: #408080; font-style: italic"># install packages from &quot;virtualization&quot; group</span>
+sudo dnf install @virtualization -y
+
+<span style="color: #408080; font-style: italic"># start libvirtd</span>
+sudo systemctl start libvirtd
+</pre></div>
+
+
+<h3 id="configure-network">Configure network</h3>
+<p>VM running in the cloud receives IP address and hostname from the cloud provider via DHCP.
+In your libvirt setup, VM would get a random IP from the pool and NO hostname.
+Let's fix that first..</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%"><span style="color: #408080; font-style: italic"># edit &#39;default&#39; network and add static DHCP</span>
+sudo virsh net-edit default
+</pre></div>
+
+
+<p>Snippet that should be added inside <code>&lt;dhcp&gt;</code> tag (I'm assuming that your default network
+has the same range as mine - 192.168.122.0/24):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%"><span style="color: #008000; font-weight: bold">&lt;dhcp&gt;</span>
+  ...
+  <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:11&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm1&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.11&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+  <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:12&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm2&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.12&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+  <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:13&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm3&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.13&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+  <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:14&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm4&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.14&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+<span style="color: #008000; font-weight: bold">&lt;/dhcp&gt;</span>
+</pre></div>
+
+
+<div class="admonition note">
+<p class="admonition-title">Why static MAC ?</p>
+<p>The MAC address will later be used when creating the VM.
+It is IMHO easier to <em>provide</em> MAC to VM, rather than <em>fetch</em> (randomly generated) MAC from VM.
+Also, you only need to define this mapping <em>once</em>, no matter how many VMs you intend
+to run.</p>
+</div>
+<p>Apply changes by restarting <code>dnsmasq</code>:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%">sudo virsh net-destroy default
+sudo virsh net-start   default
+</pre></div>
+
+
+<p>(optional) You might want to add your VMs to <code>/etc/hosts</code> file:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%">...
+192.168.122.11  vm1
+192.168.122.12  vm2
+192.168.122.13  vm3
+192.168.122.14  vm4
+</pre></div>
+
+
+<h3 id="configure-storage">Configure storage</h3>
+<p>OK, now is the time to decide which image you want to run inside the guest.
+Decent distros provide pre-built Qcow2 images ready to be imported to Openstack.
+Here is a good source: <a href="http://docs.openstack.org/image-guide/content/ch_obtaining_images.html">"Get images" in Openstack's doc</a>.
+Download one of them..</p>
+<p>I will go for CentOS for now..</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%">mkdir ~/virt
+<span style="color: #008000">cd</span> ~/virt
+wget http://cloud.centos.org/centos/7/images/CentOS-7-x86_64-GenericCloud.qcow2.xz
+xz -d CentOS-7-x86_64-GenericCloud.qcow2.xz
+</pre></div>
+
+
+<p>Create copy-on-write storage for VMs with pristine CentOS as read-only backing-store:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%"><span style="color: #008000; font-weight: bold">for</span> VMID in <span style="color: #666666">1</span> <span style="color: #666666">2</span> <span style="color: #666666">3</span> 4; <span style="color: #008000; font-weight: bold">do</span>
+    qemu-img create -f qcow2 -o <span style="color: #19177C">backing_file</span><span style="color: #666666">=</span>CentOS-7-x86_64-GenericCloud.qcow2 vm<span style="color: #BB6688; font-weight: bold">${</span><span style="color: #19177C">VMID</span><span style="color: #BB6688; font-weight: bold">}</span>.qcow2
+<span style="color: #008000; font-weight: bold">done</span>
+</pre></div>
+
+
+<div class="admonition note">
+<p class="admonition-title">Qcow2 size</p>
+<p>Note, I did not specify the device size.
+By default, VM will get 8GB of "sparse" storage.</p>
+</div>
+<p>In this example setup, all four VMs share the same base (CentOS) image.
+Note that blank VM occupy only 200kB:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%"><span style="color: #19177C">$ </span>du -shc CentOS-7-x86_64-GenericCloud.qcow2 vm?.qcow2
+959M    CentOS-7-x86_64-GenericCloud.qcow2
+196K    vm1.qcow2
+196K    vm2.qcow2
+196K    vm3.qcow2
+196K    vm4.qcow2
+960M    total
+</pre></div>
+
+
+<h3 id="create-minimal-config-drive">Create minimal config drive</h3>
+<p>This is the <em>important</em> part.
+Config drive is the way to pass information to the VM, "outside" of disk image.
+We will create a <em>minimal</em> iso image that will inject just the ssh public key.
+For the full documentation, refer to <a href="http://docs.openstack.org/user-guide/cli_config_drive.html">Openstack's "Store metadata on a configuration drive"</a>.</p>
+<p>The content of the ISO image (naturally, fill-in your public key):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%">mkdir -p config-drive/openstack/latest
+cat &gt;config-drive/openstack/latest/meta_data.json <span style="color: #BA2121">&lt;&lt;&#39;EOF&#39;</span>
+<span style="color: #BA2121">{</span>
+<span style="color: #BA2121">    &quot;public_keys&quot;: {</span>
+<span style="color: #BA2121">        &quot;bza&quot;: &quot;ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEA6rCBkwpHYS073jjOMEUrHAAtA7ovYgBv4FIdb+oD5Yn7UEffzp0fLxhJDkv9hqp3uYk6T/N++HUIeI8oFcfZ1gM00LB70Uv5IkCAy9SztvltOK781NQD1urU8i5j1l9cYLHhyYnGmM9McM77+ZY8IiPSl9jznnRquW7925UrO40= Brano Zarnovican\n&quot;</span>
+<span style="color: #BA2121">    },</span>
+<span style="color: #BA2121">    &quot;uuid&quot;: &quot;83679162-1378-4288-a2d4-70e13ec132aa&quot;</span>
+<span style="color: #BA2121">}</span>
+<span style="color: #BA2121">EOF</span>
+</pre></div>
+
+
+<div class="admonition warning">
+<p class="admonition-title">Valid json</p>
+<p>Be careful to provide a valid json file.
+Otherwise, you might waste a lot of time on troubleshooting.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">What's that UUID for?</p>
+<p>That is a mandatory field in Openstack meta_data.json.
+It's ok to have some hard-coded value for your local VM.
+It is even ok to share the same config drive (and UUID value) for all your VMs.</p>
+<p>Having just the "public_keys" and "uuid" field may be breaking some meta-data standard.
+It is working, though.</p>
+</div>
+<p>Create the ISO image:</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%">mkisofs -R -o config-drive.iso config-drive/
+</pre></div>
+
+
+<h3 id="create-vm">Create VM</h3>
+<p>Time to tie it all together..</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%"><span style="color: #19177C">VMID</span><span style="color: #666666">=</span>1
+sudo virt-install --name vm<span style="color: #BB6688; font-weight: bold">${</span><span style="color: #19177C">VMID</span><span style="color: #BB6688; font-weight: bold">}</span> --memory <span style="color: #666666">1024</span> --vcpus <span style="color: #666666">1</span> --import <span style="color: #BB6622; font-weight: bold">\</span>
+    --disk vm<span style="color: #BB6688; font-weight: bold">${</span><span style="color: #19177C">VMID</span><span style="color: #BB6688; font-weight: bold">}</span>.qcow2,bus<span style="color: #666666">=</span>virtio <span style="color: #BB6622; font-weight: bold">\</span>
+    --disk config-drive.iso,device<span style="color: #666666">=</span>cdrom,perms<span style="color: #666666">=</span>ro <span style="color: #BB6622; font-weight: bold">\</span>
+    --network <span style="color: #19177C">network</span><span style="color: #666666">=</span>default,model<span style="color: #666666">=</span>virtio,mac<span style="color: #666666">=</span>52:54:00:00:00:1<span style="color: #BB6688; font-weight: bold">${</span><span style="color: #19177C">VMID</span><span style="color: #BB6688; font-weight: bold">}</span> <span style="color: #BB6622; font-weight: bold">\</span>
+    --noautoconsole
+</pre></div>
+
+
+<div class="admonition tip">
+<p class="admonition-title">virt-manager</p>
+<p>Alternatively, you can create the VM using virt-manager.
+Just remember to:</p>
+<ul>
+<li>import existing qcow2 image (vmX.qcow2)</li>
+<li>change the MAC address on network interface to 52:54:00:00:00:1X</li>
+<li>add IDE CDROM with config-drive.iso</li>
+</ul>
+</div>
+<h2 id="and-we-are-done">And we are done..</h2>
+<p>If all worked well, you should be able to login..</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%">$ ssh centos@vm1
+The authenticity of host &#39;vm1 (192.168.122.11)&#39; can&#39;t be established.
+ECDSA key fingerprint is SHA256:JrczAJifE04hx+NUF4yTWVHA/6hh+XqELCViluVEW6Q.
+ECDSA key fingerprint is MD5:96:f0:85:88:53:3a:c5:47:c3:d2:3e:d8:a6:c1:c6:ff.
+Are you sure you want to continue connecting (yes/no)? yes
+Warning: Permanently added &#39;vm1,192.168.122.11&#39; (ECDSA) to the list of known hosts.
+[centos@vm1 ~]$
+[centos@vm1 ~]$ sudo -i
+[root@vm1 ~]#
+</pre></div>
+
+
+<h3 id="what-is-vms-base-image">What is VM's base image ?</h3>
+<p>To query Qcow2 file..</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%"><span style="color: #19177C">$ </span>qemu-img info vm1.qcow2
+image: vm1.qcow2
+file format: qcow2
+virtual size: 8.0G <span style="color: #666666">(8589934592</span> bytes<span style="color: #666666">)</span>
+disk size: 70M
+cluster_size: 65536
+backing file: CentOS-7-x86_64-GenericCloud.qcow2
+Format specific information:
+    compat: 1.1
+    lazy refcounts: <span style="color: #008000">false</span>
+<span style="color: #008000">    </span>refcount bits: 16
+    corrupt: <span style="color: #008000">false</span>
+</pre></div>
+
+
+<h3 id="re-image-the-vm">Re-image the VM</h3>
+<p>Throw away VM's data and start again from pristine image.</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%"><span style="color: #19177C">VMID</span><span style="color: #666666">=</span>1
+
+<span style="color: #408080; font-style: italic"># stop the instance, ok to be &quot;ungraceful&quot; at this point</span>
+sudo virsh destroy vm<span style="color: #BB6688; font-weight: bold">${</span><span style="color: #19177C">VMID</span><span style="color: #BB6688; font-weight: bold">}</span>
+
+<span style="color: #408080; font-style: italic"># destroy and recreate its storage</span>
+<span style="color: #008000">cd</span> ~/virt
+rm -f vm<span style="color: #BB6688; font-weight: bold">${</span><span style="color: #19177C">VMID</span><span style="color: #BB6688; font-weight: bold">}</span>.qcow2
+qemu-img create -f qcow2 -o <span style="color: #19177C">backing_file</span><span style="color: #666666">=</span>CentOS-7-x86_64-GenericCloud.qcow2 vm<span style="color: #BB6688; font-weight: bold">${</span><span style="color: #19177C">VMID</span><span style="color: #BB6688; font-weight: bold">}</span>.qcow2
+
+<span style="color: #408080; font-style: italic"># start the instance again</span>
+sudo virsh start vm<span style="color: #BB6688; font-weight: bold">${</span><span style="color: #19177C">VMID</span><span style="color: #BB6688; font-weight: bold">}</span>
+</pre></div>
+
+
+<p>Note, that you don't need to undefine the whole VM.
+Destroy or shutdown is enough.
+VM will retain hw configuration, network MAC address, etc, but it will loose all data.
+You can also switch to a different "base image" while VM is down.</p>
+<h3 id="troubleshooting-cloud-init">Troubleshooting cloud-init</h3>
+<p>This is tricky.
+Something did not work, and now you are not able to login to the VM to have a look at things.
+You can still mount the image on host OS and poke around (as root).</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%"><span style="color: #408080; font-style: italic"># mount</span>
+modprobe nbd <span style="color: #19177C">max_part</span><span style="color: #666666">=</span>63
+qemu-nbd -c /dev/nbd0 /home/user/virt/vm1.qcow2
+mount /dev/nbd0p1 /mnt/
+
+<span style="color: #408080; font-style: italic"># umount</span>
+umount /mnt
+qemu-nbd -d /dev/nbd0
+</pre></div>
+
+
+<p>Just make sure you don't have it mounted on host and guest at the same time..
+Cloud-init log file will be in <code>/mnt/var/log/cloud-init.log</code>,
+but you might need to first increase verbosity in <code>/mnt/etc/cloud/cloud.cfg.d/*logging.cfg</code></p>
+<h2 id="extras">Extras</h2>
+<h3 id="static-host-ssh-key">Static host ssh key</h3>
+<p>It's quite annoying to update <code>known_hosts</code> file every time I re-image the VM.
+One way to fix this is to "give" VM static host keys at first boot via cloud-init.
+Its config is in cloud's "user data".</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%">cat &gt;config-drive/openstack/latest/user_data <span style="color: #BA2121">&lt;&lt;&#39;EOF&#39;</span>
+<span style="color: #BA2121">#cloud-config</span>
+
+<span style="color: #BA2121">ssh_keys:</span>
+<span style="color: #BA2121">  rsa_private: |</span>
+<span style="color: #BA2121">    -----BEGIN RSA PRIVATE KEY-----</span>
+<span style="color: #BA2121">    MIIBxwIBAAJhAKD0YSHy73nUgysO13XsJmd4fHiFyQ+00R7VVu2iV9Qcon2LZS/x</span>
+<span style="color: #BA2121">    1cydPZ4pQpfjEha6WxZ6o8ci/Ea/w0n+0HGPwaxlEG2Z9inNtj3pgFrYcRztfECb</span>
+<span style="color: #BA2121">    1j6HCibZbAzYtwIBIwJgO8h72WjcmvcpZ8OvHSvTwAguO2TkR6mPgHsgSaKy6GJo</span>
+<span style="color: #BA2121">    PUJnaZRWuba/HX0KGyhz19nPzLpzG5f0fYahlMJAyc13FV7K6kMBPXTRR6FxgHEg</span>
+<span style="color: #BA2121">    L0MPC7cdqAwOVNcPY6A7AjEA1bNaIjOzFN2sfZX0j7OMhQuc4zP7r80zaGc5oy6W</span>
+<span style="color: #BA2121">    p58hRAncFKEvnEq2CeL3vtuZAjEAwNBHpbNsBYTRPCHM7rZuG/iBtwp8Rxhc9I5w</span>
+<span style="color: #BA2121">    ixvzMgi+HpGLWzUIBS+P/XhekIjPAjA285rVmEP+DR255Ls65QbgYhJmTzIXQ2T9</span>
+<span style="color: #BA2121">    luLvcmFBC6l35Uc4gTgg4ALsmXLn71MCMGMpSWspEvuGInayTCL+vEjmNBT+FAdO</span>
+<span style="color: #BA2121">    W7D4zCpI43jRS9U06JVOeSc9CDk2lwiA3wIwCTB/6uc8Cq85D9YqpM10FuHjKpnP</span>
+<span style="color: #BA2121">    REPPOyrAspdeOAV+6VKRavstea7+2DZmSUgE</span>
+<span style="color: #BA2121">    -----END RSA PRIVATE KEY-----</span>
+
+<span style="color: #BA2121">  rsa_public: ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAGEAoPRhIfLvedSDKw7XdewmZ3h8eIXJD7TRHtVW7aJX1ByifYtlL/HVzJ09nilCl+MSFrpbFnqjxyL8Rr/DSf7QcY/BrGUQbZn2Kc22PemAWthxHO18QJvWPocKJtlsDNi3 smoser@localhost</span>
+
+<span style="color: #BA2121">  ecdsa_private: |</span>
+<span style="color: #BA2121">    -----BEGIN EC PRIVATE KEY-----</span>
+<span style="color: #BA2121">    MHcCAQEEIIjH3F2tInhb1SpODeeis+7XZexdJQAjVCDUVkfQTjYyoAoGCCqGSM49</span>
+<span style="color: #BA2121">    AwEHoUQDQgAE9cHv9N9K4UF6GyGlHNR82ylKiv715LBZuXOyxezAL+FFiTMo6/qZ</span>
+<span style="color: #BA2121">    y+6rMEJYdkWxqXz4iKkiU/rgmCWvBfC1FQ==</span>
+<span style="color: #BA2121">    -----END EC PRIVATE KEY-----</span>
+
+<span style="color: #BA2121">  ecdsa_public: ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBPXB7/TfSuFBehshpRzUfNspSor+9eSwWblzssXswC/hRYkzKOv6mcvuqzBCWHZFsal8+IipIlP64JglrwXwtRU=</span>
+
+<span style="color: #BA2121">EOF</span>
+</pre></div>
+            </div>
+            <!-- /.entry-content -->
+        </article>
+    </section>
+
+        </div>
+        <div class="col-sm-3" id="sidebar">
+            <aside>
+
+<section class="well well-sm">
+    <ul class="list-group list-group-flush">
+            <li class="list-group-item"><h4><i class="fa fa-home fa-lg"></i><span class="icon-label">Social</span></h4>
+              <ul class="list-group" id="social">
+                <li class="list-group-item"><a href="http://github.com/zarnovican"><i class="fa fa-zarnovican@github-square fa-lg"></i> zarnovican@github</a></li>
+                <li class="list-group-item"><a href="https://cz.linkedin.com/in/brano-zarnovican-79a5397"><i class="fa fa-zarnovican@linkedin-square fa-lg"></i> zarnovican@linkedin</a></li>
+              </ul>
+            </li>
+
+
+
+            <li class="list-group-item"><a href="http://zarnovican.github.io/"><h4><i class="fa fa-tags fa-lg"></i><span class="icon-label">Tags</span></h4></a>
+                <ul class="list-group " id="tags">
+                    <li class="list-group-item tag-2">
+                        <a href="http://zarnovican.github.io/tag/cloud-init.html">
+                            cloud-init
+                        </a>
+                    </li>
+                    <li class="list-group-item tag-2">
+                        <a href="http://zarnovican.github.io/tag/config-drive.html">
+                            config drive
+                        </a>
+                    </li>
+                    <li class="list-group-item tag-2">
+                        <a href="http://zarnovican.github.io/tag/libvirt.html">
+                            libvirt
+                        </a>
+                    </li>
+                    <li class="list-group-item tag-2">
+                        <a href="http://zarnovican.github.io/tag/qcow2.html">
+                            qcow2
+                        </a>
+                    </li>
+                </ul>
+            </li>
+    <li class="list-group-item"><h4><i class="fa fa-external-link-square fa-lg"></i><span class="icon-label">Links</span></h4>
+      <ul class="list-group" id="links">
+        <li class="list-group-item">
+            <a href="feeds/all.atom.xml" target="_blank">
+                Atom Feed
+            </a>
+        </li>
+        <li class="list-group-item">
+            <a href="feeds/all.rss.xml" target="_blank">
+                RSS Feed
+            </a>
+        </li>
+      </ul>
+    </li>
+    </ul>
+</section>
+            </aside>
+        </div>
+    </div>
+</div>
+<footer>
+   <div class="container">
+      <hr>
+      <div class="row">
+         <div class="col-xs-10">&copy; 2015 Braňo Žarnovičan
+            &middot; Powered by <a href="https://github.com/DandyDev/pelican-bootstrap3" target="_blank">pelican-bootstrap3</a>,
+            <a href="http://docs.getpelican.com/" target="_blank">Pelican</a>,
+            <a href="http://getbootstrap.com" target="_blank">Bootstrap</a>         </div>
+         <div class="col-xs-2"><p class="pull-right"><i class="fa fa-arrow-up"></i> <a href="#">Back to top</a></p></div>
+      </div>
+   </div>
+</footer>
+<script src="http://zarnovican.github.io/theme/js/jquery.min.js"></script>
+
+<!-- Include all compiled plugins (below), or include individual files as needed -->
+<script src="http://zarnovican.github.io/theme/js/bootstrap.min.js"></script>
+
+<!-- Enable responsive features in IE8 with Respond.js (https://github.com/scottjehl/Respond) -->
+<script src="http://zarnovican.github.io/theme/js/respond.min.js"></script>
+
+
+</body>
+</html>
