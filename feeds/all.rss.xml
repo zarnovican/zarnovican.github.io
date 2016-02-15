@@ -1,5 +1,487 @@
 <?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Braňo Žarnovičan's blog</title><link>http://zarnovican.github.io/</link><description></description><atom:link href="http://zarnovican.github.io/feeds/all.rss.xml" rel="self"></atom:link><lastBuildDate>Tue, 10 Nov 2015 00:00:00 +0100</lastBuildDate><item><title>Run cloud image without cloud</title><link>http://zarnovican.github.io/2015/11/10/run-cloud-image-without-cloud/</link><description>&lt;div class="toc"&gt;
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Braňo Žarnovičan's blog</title><link>http://zarnovican.github.io/</link><description></description><atom:link href="http://zarnovican.github.io/feeds/all.rss.xml" rel="self"></atom:link><lastBuildDate>Mon, 15 Feb 2016 00:00:00 +0100</lastBuildDate><item><title>uWSGI graceful Python code deploy</title><link>http://zarnovican.github.io/2016/02/15/uwsgi-graceful-reload/</link><description>&lt;div class="toc"&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href="#pre-fork-vs-lazy-app"&gt;Pre-fork vs Lazy-app&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#emperor-mode"&gt;Emperor mode&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#reload-types"&gt;Reload types&lt;/a&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href="#re-exec-master-r"&gt;re-exec master ("r")&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#restart-workers-w"&gt;restart workers ("w")&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#chain-restart-workers-c"&gt;chain restart workers ("c")&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#fork-master-f"&gt;fork master ("f")&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#zerg-dance"&gt;Zerg dance&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#update-upstream-config"&gt;update upstream config&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;a href="#examples"&gt;Examples&lt;/a&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href="#re-exec-master-r_1"&gt;re-exec master ("r")&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#chain-restart-workers-cw"&gt;(chain) restart workers ("c"/"w")&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#fork-master-f_1"&gt;fork master ("f")&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#zerg-dance_1"&gt;Zerg dance&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;li&gt;&lt;a href="#choosing-the-right-approach"&gt;Choosing the right approach&lt;/a&gt;&lt;ul&gt;
+&lt;li&gt;&lt;a href="#filtering-out-candidates"&gt;Filtering out candidates&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;a href="#winner-fork-master"&gt;Winner: fork master&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/li&gt;
+&lt;/ul&gt;
+&lt;/div&gt;
+&lt;p&gt;Most likely, you have already read &lt;a href="http://uwsgi-docs.readthedocs.org/en/latest/articles/TheArtOfGracefulReloading.html"&gt;"The Art of Graceful Reloading"&lt;/a&gt;.
+Although it &lt;em&gt;does&lt;/em&gt; explain a lot, it still leave gaps for the reader
+to figure out. This can be quite time consuming. Well.. I went through
+the exercise and this is the result.&lt;/p&gt;
+&lt;p&gt;I will go through the reload types shortly, but first I need some terminology
+and theoretical background on how WSGI works.&lt;/p&gt;
+&lt;h2 id="pre-fork-vs-lazy-app"&gt;Pre-fork vs Lazy-app&lt;/h2&gt;
+&lt;p&gt;uWSGI offers two modes how to startup your application.
+In pre-fork (default), &lt;em&gt;master&lt;/em&gt; process will do the WSGI initialization, then he will fork the workers.
+In lazy-app, master will first fork the workers and they do their own initialization.&lt;/p&gt;
+&lt;p&gt;&lt;img alt="pre-fork vs lazy-app" src="http://zarnovican.github.io/static/2016/02/15/pre-fork.png" /&gt;&lt;/p&gt;
+&lt;p&gt;(All diagrams in this post show processes as boxes. Their parent-child relation is denoted by an arrow)&lt;/p&gt;
+&lt;p&gt;As you can imagine, pre-fork is much less resource intensive (memory consumption, total startup time,
+time-to-spawn new worker, ..).
+Lazy-app is more "robust", workers are more isolated from master and each other.&lt;/p&gt;
+&lt;div class="admonition note"&gt;
+&lt;p class="admonition-title"&gt;Memory usage example&lt;/p&gt;
+&lt;p&gt;Pre-forked helloworld app with 10 workers = 46M. The same app with &lt;code&gt;lazy-apps = yes&lt;/code&gt; = 225MB.
+So, even two full copies of pre-forked app (92MB) are way better than lazy-apps
+(depending on number of workers).&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;There is also one important difference related to code deploy.
+Some types of reloads &lt;em&gt;do not reload master&lt;/em&gt;, only workers !!&lt;/p&gt;
+&lt;p&gt;&lt;img alt="pre-forked workers with mixed code problem" src="http://zarnovican.github.io/static/2016/02/15/worker-only-reload.png" /&gt;&lt;/p&gt;
+&lt;p&gt;This is a problem for pre-forked apps, because you may end up with old and new python modules
+loaded in the same process.
+During code deploy, worker would "inherit" (via &lt;code&gt;fork()&lt;/code&gt;) old version of modules already loaded by master.
+While modules, not part of WSGI initialization, will be loaded from filesystem (new code).&lt;/p&gt;
+&lt;p&gt;Lazyly-loaded apps are not affected.&lt;/p&gt;
+&lt;h2 id="emperor-mode"&gt;Emperor mode&lt;/h2&gt;
+&lt;p&gt;uWSGI can be started as an Emperor. It is a small process responsible for starting/stopping
+other uWSGI processes, called vassals.
+Emperor does not have any application logic, think of it as &lt;code&gt;init&lt;/code&gt; or &lt;code&gt;systemd&lt;/code&gt;.
+You can create vassal by dropping an &lt;code&gt;.ini&lt;/code&gt; file into the directory.
+Shutdown vassal by deleting his &lt;code&gt;.ini&lt;/code&gt; file. Simple.&lt;/p&gt;
+&lt;p&gt;&lt;img alt="emperor with three vassals" src="http://zarnovican.github.io/static/2016/02/15/emperor-mode.png" /&gt;&lt;/p&gt;
+&lt;p&gt;What is important to remember is that Emperor will re-spawn his vassal when he dies.
+So, for example, if you gracefully shutdown old instance of your app running v1.0 code,
+Emperor will happily start it again.
+There is no distinction (AFAIK) between unexpected death (Emperor should restart vassal)
+and administrative shutdown (Emperor should &lt;em&gt;not&lt;/em&gt; restart vassal).&lt;/p&gt;
+&lt;p&gt;In addition, if you delete vassal file, Emperor will shut it down ungracefully.
+Any existing http sessions will be terminated.&lt;/p&gt;
+&lt;div class="admonition note"&gt;
+&lt;p class="admonition-title"&gt;Incomplete information&lt;/p&gt;
+&lt;p&gt;I admit that some information in this blog post may be inaccurate.
+It is based on my personal empirical experience.
+In this particular case, there &lt;em&gt;may&lt;/em&gt; be obscure option to tweak vassal shutdown
+but despite intensive research, I haven't found one.&lt;/p&gt;
+&lt;/div&gt;
+&lt;h2 id="reload-types"&gt;Reload types&lt;/h2&gt;
+&lt;p&gt;Reload can be triggered by sending the corresponding command to master FIFO pipe
+(see &lt;a href="http://uwsgi-docs.readthedocs.org/en/latest/MasterFIFO.html"&gt;"The Master FIFO"&lt;/a&gt;)&lt;/p&gt;
+&lt;p&gt;I will use these terms to estimate downtime/reload time:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;init&lt;/strong&gt; - time to initialize an app&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;idle-shutdown&lt;/strong&gt; - time to gracefully shutdown idle worker (time to run cleanup code)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;busy-shutdown&lt;/strong&gt; - time to gracefully shutdown busy worker
+  (waiting for your longest session to finish, plus time to run cleanup code)&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;N&lt;/strong&gt; - number of workers&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id="re-exec-master-r"&gt;re-exec master ("r")&lt;/h3&gt;
+&lt;p&gt;&lt;a href="http://zarnovican.github.io/static/2016/02/15/reload-r.png"&gt;&lt;img alt="reload type &amp;quot;r&amp;quot;" src="http://zarnovican.github.io/static/2016/02/15/reload-r.png" /&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;master will gracefully shutdown &lt;em&gt;all&lt;/em&gt; workers at once&lt;/li&gt;
+&lt;li&gt;wait until &lt;em&gt;all&lt;/em&gt; workers are down&lt;/li&gt;
+&lt;li&gt;re-exec itself - basically, run new code inside the same process&lt;/li&gt;
+&lt;li&gt;spawn new workers&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;The problem here is that all idle workers die immediately.
+Only busy workers remain.
+So, during shutdown (2.), while you are waiting for your long sessions to finish,
+there is &lt;em&gt;nobody&lt;/em&gt; to handle new requests.
+Also, nobody will handle requests while initialization (3.) is in progress.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;downtime: busy-shutdown + init&lt;/li&gt;
+&lt;li&gt;total time: ~ busy-shutdown + init&lt;/li&gt;
+&lt;li&gt;master restart: yes&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id="restart-workers-w"&gt;restart workers ("w")&lt;/h3&gt;
+&lt;p&gt;&lt;a href="http://zarnovican.github.io/static/2016/02/15/reload-w.png"&gt;&lt;img alt="reload type &amp;quot;w&amp;quot;" src="http://zarnovican.github.io/static/2016/02/15/reload-w.png" /&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;master will gracefully shutdown &lt;em&gt;all&lt;/em&gt; workers at once&lt;/li&gt;
+&lt;li&gt;when a worker dies, it is immediately re-spawned&lt;/li&gt;
+&lt;li&gt;until all workers are re-spawned&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;This is already better than "r", because master won't wait until &lt;em&gt;all&lt;/em&gt; workers
+are down. Idle worker die/respawn in parallel, while busy workers
+are left to finish their work and will respawn later.
+The problem is that this will only restart workers.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;downtime: idle-shutdown + init&lt;/li&gt;
+&lt;li&gt;total time: ~ busy-shutdown + init&lt;/li&gt;
+&lt;li&gt;master restart: NO (NOT compatible with pre-fork)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id="chain-restart-workers-c"&gt;chain restart workers ("c")&lt;/h3&gt;
+&lt;p&gt;&lt;a href="http://zarnovican.github.io/static/2016/02/15/reload-c.png"&gt;&lt;img alt="reload type &amp;quot;c&amp;quot;" src="http://zarnovican.github.io/static/2016/02/15/reload-c.png" /&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;master will gracefully shutdown &lt;em&gt;one&lt;/em&gt; worker at a time (ordered by id apparently)&lt;/li&gt;
+&lt;li&gt;when a worker dies, it is immediately re-spawned&lt;/li&gt;
+&lt;li&gt;until all workers are re-spawned&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;This is the same as "w", except we shutdown/restart &lt;em&gt;one&lt;/em&gt; worker at a time.
+Workers are restarted sequentially, irrespective to their status (idle/busy).
+In worst case, you will wait N-times for long session to gracefully finish.&lt;/p&gt;
+&lt;p&gt;Unlike "r"/"w", in this reload type, you can have a &lt;em&gt;mix&lt;/em&gt; of old/new idle workers.
+So, during the reload period, new requests may be handler by either new or old code.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;downtime: none&lt;/li&gt;
+&lt;li&gt;total time: ~ N x (busy-shutdown + init)&lt;/li&gt;
+&lt;li&gt;master restart: NO (NOT compatible with pre-fork)&lt;/li&gt;
+&lt;li&gt;mixed (old/new) code&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id="fork-master-f"&gt;fork master ("f")&lt;/h3&gt;
+&lt;p&gt;&lt;a href="http://zarnovican.github.io/static/2016/02/15/reload-f.png"&gt;&lt;img alt="fork master &amp;quot;f&amp;quot;" src="http://zarnovican.github.io/static/2016/02/15/reload-f.png" /&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;p&gt;This is technically not a reload. Master will simply fork itself and leave two copies running.
+It is up to &lt;em&gt;you&lt;/em&gt; to shutdown the old one.
+One possible approach is to use multiple FIFO pipes as suggested by "The Art of Graceful Reloading" doc.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;fork new master&lt;/li&gt;
+&lt;li&gt;when initialization is done, it forks new workers&lt;/li&gt;
+&lt;li&gt;old master is told to shutdown&lt;/li&gt;
+&lt;li&gt;old master will wait until last busy worker finishes&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;You don't have downtime here, but you temporarily use twice as much memory.
+Forking master is considered "dangerous" (by uWSGI documentation).
+There is no mix of old/new idle workers either.
+New master will shutdown old master (and workers) when his workers are ready to accept queries.&lt;/p&gt;
+&lt;p&gt;There is a problem with shutting down the old master.
+It does not work in Emperor mode.
+Emperor would re-spawn his dead vassal.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;downtime: none&lt;/li&gt;
+&lt;li&gt;total time: ~ init + busy-shutdown&lt;/li&gt;
+&lt;li&gt;master restart: yes&lt;/li&gt;
+&lt;li&gt;NOT compatible with Emperor&lt;/li&gt;
+&lt;li&gt;number of workers: 2x N&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h3 id="zerg-dance"&gt;Zerg dance&lt;/h3&gt;
+&lt;p&gt;&lt;a href="http://zarnovican.github.io/static/2016/02/15/zerg-dance.png"&gt;&lt;img alt="Zerg dance" src="http://zarnovican.github.io/static/2016/02/15/zerg-dance.png" /&gt;&lt;/a&gt;
+(only the first two steps are depicted in diagram)&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;start new instance (vassal)&lt;/li&gt;
+&lt;li&gt;when initialization is done, it forks new workers&lt;/li&gt;
+&lt;li&gt;old master is told to shutdown&lt;/li&gt;
+&lt;li&gt;old master will wait until last busy worker finishes&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;This is similar to fork, except old and new master are not parent-child,
+but siblings.
+Temporarily, you would run two full copies of your app, but the mechanism of sharing
+the socket for requests is different. In fork reload, the descriptor was passed from parent
+to child by &lt;code&gt;fork()&lt;/code&gt;. In this mode, there is a special service (Zerg pool)
+to pass the socket to new master via another control socket.&lt;/p&gt;
+&lt;p&gt;Zerg pool process is quite tiny and does not contain any of your application logic.
+So, you probably won't need to restart/upgrade it often.
+But it is still a SPOF and quite fragile (it won't survive reload for example).&lt;/p&gt;
+&lt;p&gt;As you can see, you need to start &lt;em&gt;two&lt;/em&gt; top level uWSGI processes and new one
+for every code update.
+Emperor is quite handy for this use case (Zerg and App server would both be top-level vassals).
+You just need to be careful with shutdown/delete of old vassal.&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;downtime: none&lt;/li&gt;
+&lt;li&gt;total time: ~ init + busy-shutdown&lt;/li&gt;
+&lt;li&gt;master restart: yes&lt;/li&gt;
+&lt;li&gt;number of workers: 2x N&lt;/li&gt;
+&lt;li&gt;another single point of failure&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class="admonition note"&gt;
+&lt;p class="admonition-title"&gt;Zerg Pool vs Zerg Server&lt;/p&gt;
+&lt;p&gt;The above information apply to "Zerg Pool". There is another Zerg (Server) which I
+did not find useful for my graceful code deploy case.&lt;/p&gt;
+&lt;/div&gt;
+&lt;h3 id="update-upstream-config"&gt;update upstream config&lt;/h3&gt;
+&lt;p&gt;All of the above graceful reloads have one major goal in common.
+To make sure there is someone listening on &lt;em&gt;the one&lt;/em&gt; socket.
+It would open new possibilities if you could drop that requirement
+and let each app instance listen on its own socket.
+Then, you would be able to update upstream (Nginx config) to point
+to the new socket, while letting existing sessions to gracefully finish
+on the old one.&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;start new instance (vassal)&lt;/li&gt;
+&lt;li&gt;when initialization is done, it forks new workers&lt;/li&gt;
+&lt;li&gt;update upstream configuration &amp;amp; reload&lt;/li&gt;
+&lt;li&gt;wait until old instance (all workers) are idle&lt;/li&gt;
+&lt;li&gt;delete old instance&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;This approach has many of the same aspects of Zerg dance (minus the Zerg process).&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;downtime: none&lt;/li&gt;
+&lt;li&gt;total time: ~ init + busy-shutdown&lt;/li&gt;
+&lt;li&gt;master restart: yes&lt;/li&gt;
+&lt;li&gt;number of workers: 2x N&lt;/li&gt;
+&lt;li&gt;changing socket name&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2 id="examples"&gt;Examples&lt;/h2&gt;
+&lt;p&gt;I will use my own &lt;a href="https://github.com/zarnovican/django-helloworld"&gt;Helloworld Django app&lt;/a&gt; to demonstrate each approach.
+Examples are &lt;em&gt;minimalist&lt;/em&gt;, but fully working.
+Deploy code is also cut down to bare minimum.
+Your real deploy would do much, much more.
+Like update DB schema, collect static files, etc.&lt;/p&gt;
+&lt;p&gt;I'll be changing the code by &lt;code&gt;git checkout ..&lt;/code&gt; "in-place" because it's simpler to demonstrate.
+In reality, you may want to start each new deploy from a clean copy of your checkout.&lt;/p&gt;
+&lt;h3 id="re-exec-master-r_1"&gt;re-exec master ("r")&lt;/h3&gt;
+&lt;p&gt;Config:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;[uwsgi]
+chdir           = /home/foo/helloworld
+module          = helloworld.wsgi
+processes       = 4
+socket          = /home/foo/var/helloworld/app.sock
+master-fifo     = /home/foo/var/helloworld/master.fifo
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Code deploy:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #008000"&gt;cd&lt;/span&gt; ~/helloworld
+git checkout v2.0
+&lt;span style="color: #008000"&gt;echo &lt;/span&gt;r &amp;gt; ~/var/helloworld/master.fifo
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;h3 id="chain-restart-workers-cw"&gt;(chain) restart workers ("c"/"w")&lt;/h3&gt;
+&lt;p&gt;Config:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;[uwsgi]
+chdir           = /home/foo/helloworld
+module          = helloworld.wsgi
+processes       = 4
+socket          = /home/foo/var/helloworld/app.sock
+master-fifo     = /home/foo/var/helloworld/master.fifo
+lazy-apps       = true                                      # required for &amp;quot;w&amp;quot;/&amp;quot;c&amp;quot; reloads
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Code deploy:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #008000"&gt;cd&lt;/span&gt; ~/helloworld
+git checkout v2.0
+&lt;span style="color: #008000"&gt;echo &lt;/span&gt;w &amp;gt; ~/var/helloworld/master.fifo
+&lt;span style="color: #408080; font-style: italic"&gt;# or&lt;/span&gt;
+&lt;span style="color: #408080; font-style: italic"&gt;# echo c &amp;gt; ~/var/helloworld/master.fifo&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;h3 id="fork-master-f_1"&gt;fork master ("f")&lt;/h3&gt;
+&lt;p&gt;You &lt;em&gt;cannot&lt;/em&gt; start this from Emperor.&lt;/p&gt;
+&lt;p&gt;This is minimal configuration, see down below for more fine-tuned one:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;[uwsgi]
+chdir           = /home/foo/helloworld
+module          = helloworld.wsgi
+processes       = 4
+socket          = /home/foo/var/helloworld/app.sock
+vacuum          = false                                     # see below for explanation
+master-fifo     = /home/foo/var/helloworld/new_instance.fifo
+master-fifo     = /home/foo/var/helloworld/running_instance.fifo
+
+if-exists = /home/foo/var/helloworld/running_instance.fifo
+  hook-accepting1-once = writefifo:/home/foo/var/helloworld/running_instance.fifo q
+endif =
+hook-accepting1-once = writefifo:/home/foo/var/helloworld/new_instance.fifo 1
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Code deploy:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #008000"&gt;cd&lt;/span&gt; ~/helloworld
+git checkout v2.0
+&lt;span style="color: #008000"&gt;echo &lt;/span&gt;f &amp;gt; ~/var/helloworld/running_instance.fifo
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;h3 id="zerg-dance_1"&gt;Zerg dance&lt;/h3&gt;
+&lt;p&gt;This setup is using Emperor to start/stop vassals.&lt;/p&gt;
+&lt;p&gt;Emperor startup:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #19177C"&gt;$ &lt;/span&gt;uwsgi --emperor ~/vassal
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Zerg config (~/vassal/zerg.ini):&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;[uwsgi]
+zergpool = /home/foo/var/helloworld/zerg.sock:/home/foo/var/helloworld/app.sock
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Vassal config (~/var/helloworld/vassal.ini):&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;[uwsgi]
+chdir           = /home/foo/helloworld
+module          = helloworld.wsgi
+processes       = 4
+socket          = /home/foo/var/helloworld/app.sock
+zerg            = /home/foo/var/helloworld/zerg.sock
+stats           = /home/foo/var/helloworld/%n.stats
+
+hook-accepting1-once = write:/home/foo/var/helloworld/%n.ready ok
+hook-as-user-atexit = unlink:/home/foo/var/helloworld/%n.ready
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Code deploy:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;create new vassal &lt;code&gt;vassal/helloworld-&amp;lt;newhash&amp;gt;.ini&lt;/code&gt;&lt;/li&gt;
+&lt;li&gt;wait until new vassal is up (&lt;code&gt;helloworld-&amp;lt;newhash&amp;gt;.ready&lt;/code&gt; file is created)&lt;/li&gt;
+&lt;li&gt;wait until old vassal is idle (all his workers are in idle state)&lt;/li&gt;
+&lt;li&gt;remove old vassal &lt;code&gt;vassal/helloworld-&amp;lt;oldhash&amp;gt;.ini&lt;/code&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #19177C"&gt;VERSION&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;v2.0
+&lt;span style="color: #008000"&gt;cd&lt;/span&gt; ~/helloworld
+git checkout &lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;&lt;span style="color: #19177C"&gt;$VERSION&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;
+&lt;span style="color: #19177C"&gt;NEW&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;quot;helloworld-&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold"&gt;$(&lt;/span&gt;git rev-parse --short HEAD&lt;span style="color: #008000; font-weight: bold"&gt;)&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;
+&lt;span style="color: #008000"&gt;cd&lt;/span&gt; ~/var/helloworld/
+&lt;span style="color: #19177C"&gt;OLD&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold"&gt;$(&lt;/span&gt;cat current 2&amp;gt;/dev/null&lt;span style="color: #008000; font-weight: bold"&gt;)&lt;/span&gt;
+cp vassal.ini ~/vassal/&lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;&lt;span style="color: #19177C"&gt;$NEW&lt;/span&gt;&lt;span style="color: #BA2121"&gt;.ini&amp;quot;&lt;/span&gt;
+&lt;span style="color: #008000; font-weight: bold"&gt;while&lt;/span&gt; &lt;span style="color: #666666"&gt;[&lt;/span&gt; ! -e &lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;&lt;span style="color: #19177C"&gt;$NEW&lt;/span&gt;&lt;span style="color: #BA2121"&gt;.ready&amp;quot;&lt;/span&gt; &lt;span style="color: #666666"&gt;]&lt;/span&gt;; &lt;span style="color: #008000; font-weight: bold"&gt;do&lt;/span&gt; sleep 1; &lt;span style="color: #008000; font-weight: bold"&gt;done&lt;/span&gt;
+&lt;span style="color: #008000"&gt;echo&lt;/span&gt; &lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;&lt;span style="color: #19177C"&gt;$NEW&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt; &amp;gt; current
+&lt;span style="color: #008000; font-weight: bold"&gt;if&lt;/span&gt; &lt;span style="color: #666666"&gt;[&lt;/span&gt; -n &lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;&lt;span style="color: #19177C"&gt;$OLD&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt; &lt;span style="color: #666666"&gt;]&lt;/span&gt;; &lt;span style="color: #008000; font-weight: bold"&gt;then&lt;/span&gt;
+    ~/bin/uwsgi-wait-for-workers.py &lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;&lt;span style="color: #19177C"&gt;$OLD&lt;/span&gt;&lt;span style="color: #BA2121"&gt;.stats&amp;quot;&lt;/span&gt;
+    rm -f ~/vassal/&lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;&lt;span style="color: #19177C"&gt;$OLD&lt;/span&gt;&lt;span style="color: #BA2121"&gt;.ini&amp;quot;&lt;/span&gt;
+&lt;span style="color: #008000; font-weight: bold"&gt;fi&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;The script &lt;a href="http://zarnovican.github.io/static/2016/02/15/uwsgi-wait-for-workers.py"&gt;uwsgi-wait-for-workers.py&lt;/a&gt; connects to stats socket
+of a vassal and waits until all his workers are "idle".&lt;/p&gt;
+&lt;h2 id="choosing-the-right-approach"&gt;Choosing the right approach&lt;/h2&gt;
+&lt;p&gt;This part may be subjective.
+It all depends on your requirements and use cases, which solution is better for you.&lt;/p&gt;
+&lt;h3 id="filtering-out-candidates"&gt;Filtering out candidates&lt;/h3&gt;
+&lt;p&gt;Summary of downsides:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;with downtime: "r"/"w" - they shutdown before starting ("r" has larger downtime)&lt;/li&gt;
+&lt;li&gt;pre-fork incompatible: "w"/"c" - they don't restart master&lt;/li&gt;
+&lt;li&gt;mixed responses: "c" - it has both old and new idle workers at the same time&lt;/li&gt;
+&lt;li&gt;memory heavy: "f"/Zerg - they spawn full copy side-by-side&lt;/li&gt;
+&lt;li&gt;Emperor incompatible: "f" - cannot allow old master to respawn&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;"r"/"w" are out due to the downtime. If your app has long sessions (like file upload),
+then the downtime would be unacceptable.&lt;/p&gt;
+&lt;p&gt;Zerg is quite frankly very fragile. Without zerg process, nothing works.
+And you have to ask yourself questions like
+"when zerg is reloaded, do I have to restart the app as well ?" and
+"if both zerg/app is running, how do I know that restart is required ?"&lt;/p&gt;
+&lt;p&gt;So I ended up with:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;"chain worker restart" - simple, but requires lazy-apps. Mixed old/new responses temporarily.&lt;/li&gt;
+&lt;li&gt;"fork master" - complex, but better memory footprint. Incompatible with Emperor.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;strong&gt;memory argument&lt;/strong&gt; - as I have shown in "Pre-fork vs Lazy-app", two copies of pre-forked app during deploy
+(fork master) is still better than one lazy-app (chain restart).&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;mixed responses argument&lt;/strong&gt; - this might not be such huge deal. When you deploy code on multiple machines
+you would also get mixed responses. So, why would you put such restriction on multiple processes
+on the same machine ? It might be better to write app to tolerate it..&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Emperor argument&lt;/strong&gt; - without Emperor, I was forced to start uWSGI directly by systemd.
+If nothing else, that step made the setup more robust. This is not an argument against fork.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;complexity argument&lt;/strong&gt; - chain restart is much simpler, no doubt&lt;/p&gt;
+&lt;p&gt;IMHO, the benefit of lower memory usage out-weights the simplicity of chain restart.&lt;/p&gt;
+&lt;h3 id="winner-fork-master"&gt;Winner: fork master&lt;/h3&gt;
+&lt;p&gt;uWSGI is executed from user's &lt;code&gt;systemd&lt;/code&gt;.
+Here is the unit file (~/.config/systemd/user/helloworld.service):&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;[Unit]
+Description=Helloworld Django app
+
+[Service]
+PIDFile=%h/var/helloworld/app.pid
+ExecStart=/usr/local/bin/uwsgi --ini %h/.config/helloworld/uwsgi.ini
+ExecReload=/home/foo/bin/fifo-write.sh f %h/var/helloworld/running_instance.fifo
+KillSignal=SIGQUIT
+
+[Install]
+WantedBy=default.target
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;(&lt;a href="http://zarnovican.github.io/static/2016/02/15/fifo-write.sh"&gt;fifo-write.sh&lt;/a&gt; is a simple bash script that will write to fifo in non-blocking mode)&lt;/p&gt;
+&lt;p&gt;Config:&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;[uwsgi]
+chdir           = /home/foo/helloworld
+module          = helloworld.wsgi
+processes       = 4
+socket          = /home/foo/var/helloworld/app.sock
+pidfile         = /home/foo/var/helloworld/app.pid
+vacuum          = false
+
+hook-accepting1-once = write:/home/foo/var/helloworld/helloworld-8f88930.ready ok
+hook-as-user-atexit = unlink:/home/foo/var/helloworld/helloworld-8f88930.ready
+
+master-fifo     = /home/foo/var/helloworld/new_instance.fifo
+master-fifo     = /home/foo/var/helloworld/running_instance.fifo
+
+if-exists = /home/foo/var/helloworld/running_instance.fifo
+  hook-accepting1-once = writefifo:/home/foo/var/helloworld/running_instance.fifo q
+endif =
+hook-accepting1-once = writefifo:/home/foo/var/helloworld/new_instance.fifo 1P
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;div class="admonition warning"&gt;
+&lt;p class="admonition-title"&gt;why vacuum=false ?&lt;/p&gt;
+&lt;p&gt;During deploy, old and new master share the same socket &lt;code&gt;/home/foo/var/helloworld/app.sock&lt;/code&gt;.
+With vacuum=true, old master would delete it during shutdown.&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="admonition note"&gt;
+&lt;p class="admonition-title"&gt;why pid file ?&lt;/p&gt;
+&lt;p&gt;Pid file is needed by systemd: a) to figure out if the service is still running,
+b) where he should be sending TERM/KILL signals.
+Notice, that pid file is updated by new master via fifo command "P".&lt;/p&gt;
+&lt;/div&gt;
+&lt;div class="admonition note"&gt;
+&lt;p class="admonition-title"&gt;what is that &lt;code&gt;helloworld-8f88930.ready&lt;/code&gt; file ?&lt;/p&gt;
+&lt;p&gt;It is a flag to indicate that instance with hash "8f88930" has started and
+it is ready to accept connections. Each instance has its own ready file.
+The file is looked up during deploy, but it has no meaning afterwards.
+Even there, it is not strictly necessary.
+It's only a safety check.&lt;/p&gt;
+&lt;/div&gt;
+&lt;p&gt;Code deploy:&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;update config file &lt;code&gt;~/.config/helloworld/uwsgi.ini&lt;/code&gt; (from template)&lt;/li&gt;
+&lt;li&gt;initiate forking of master, new master will read the new config&lt;/li&gt;
+&lt;li&gt;wait until new master is up (&lt;code&gt;helloworld-&amp;lt;newhash&amp;gt;.ready&lt;/code&gt; file is created)&lt;/li&gt;
+&lt;li&gt;wait until old master dies&lt;/li&gt;
+&lt;li&gt;do cleanup after old code is down&lt;/li&gt;
+&lt;/ol&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #19177C"&gt;VERSION&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;v2.0
+&lt;span style="color: #008000"&gt;cd&lt;/span&gt; ~/helloworld
+git checkout &lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;&lt;span style="color: #19177C"&gt;$VERSION&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;
+&lt;span style="color: #19177C"&gt;NEW&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;quot;helloworld-&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold"&gt;$(&lt;/span&gt;git rev-parse --short HEAD&lt;span style="color: #008000; font-weight: bold"&gt;)&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;
+&lt;span style="color: #008000"&gt;cd&lt;/span&gt; ~/var/helloworld/
+&lt;span style="color: #19177C"&gt;OLD_PID&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;&lt;span style="color: #008000; font-weight: bold"&gt;$(&lt;/span&gt;cat app.pid 2&amp;gt;/dev/null&lt;span style="color: #008000; font-weight: bold"&gt;)&lt;/span&gt;
+
+cat &amp;gt; ~/.config/helloworld/uwsgi.ini &lt;span style="color: #BA2121"&gt;&amp;lt;&amp;lt;EOF&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;[uwsgi]&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;chdir           = /home/foo/helloworld&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;module          = helloworld.wsgi&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;processes       = 4&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;socket          = /home/foo/var/helloworld/app.sock&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;pidfile         = /home/foo/var/helloworld/app.pid&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;vacuum          = false&lt;/span&gt;
+
+&lt;span style="color: #BA2121"&gt;hook-accepting1-once = write:/home/foo/var/helloworld/$NEW.ready ok&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;hook-as-user-atexit = unlink:/home/foo/var/helloworld/$NEW.ready&lt;/span&gt;
+
+&lt;span style="color: #BA2121"&gt;master-fifo     = /home/foo/var/helloworld/new_instance.fifo&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;master-fifo     = /home/foo/var/helloworld/running_instance.fifo&lt;/span&gt;
+
+&lt;span style="color: #BA2121"&gt;if-exists = /home/foo/var/helloworld/running_instance.fifo&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;  hook-accepting1-once = writefifo:/home/foo/var/helloworld/running_instance.fifo q&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;endif =&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;hook-accepting1-once = writefifo:/home/foo/var/helloworld/new_instance.fifo 1P&lt;/span&gt;
+&lt;span style="color: #BA2121"&gt;EOF&lt;/span&gt;
+
+&lt;span style="color: #408080; font-style: italic"&gt;# in case of reload, this will &amp;quot;echo f &amp;gt; ~/var/helloworld/running_instance.fifo&amp;quot;&lt;/span&gt;
+systemctl --user reload-or-restart helloworld
+
+&lt;span style="color: #008000; font-weight: bold"&gt;while&lt;/span&gt; &lt;span style="color: #666666"&gt;[&lt;/span&gt; ! -e &lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;&lt;span style="color: #19177C"&gt;$NEW&lt;/span&gt;&lt;span style="color: #BA2121"&gt;.ready&amp;quot;&lt;/span&gt; &lt;span style="color: #666666"&gt;]&lt;/span&gt;; &lt;span style="color: #008000; font-weight: bold"&gt;do&lt;/span&gt; sleep 1; &lt;span style="color: #008000; font-weight: bold"&gt;done&lt;/span&gt;
+&lt;span style="color: #008000; font-weight: bold"&gt;if&lt;/span&gt; &lt;span style="color: #666666"&gt;[&lt;/span&gt; -n &lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt;&lt;span style="color: #19177C"&gt;$OLD_PID&lt;/span&gt;&lt;span style="color: #BA2121"&gt;&amp;quot;&lt;/span&gt; &lt;span style="color: #666666"&gt;]&lt;/span&gt;; &lt;span style="color: #008000; font-weight: bold"&gt;then&lt;/span&gt;
+    &lt;span style="color: #008000; font-weight: bold"&gt;while&lt;/span&gt; &lt;span style="color: #666666"&gt;[&lt;/span&gt; -e &lt;span style="color: #BA2121"&gt;&amp;quot;/proc/&lt;/span&gt;&lt;span style="color: #19177C"&gt;$OLD_PID&lt;/span&gt;&lt;span style="color: #BA2121"&gt;/status&amp;quot;&lt;/span&gt; &lt;span style="color: #666666"&gt;]&lt;/span&gt;; &lt;span style="color: #008000; font-weight: bold"&gt;do&lt;/span&gt; sleep 1; &lt;span style="color: #008000; font-weight: bold"&gt;done&lt;/span&gt;
+&lt;span style="color: #008000; font-weight: bold"&gt;fi&lt;/span&gt;
+&lt;span style="color: #408080; font-style: italic"&gt;# cleanup here&lt;/span&gt;
+&lt;/pre&gt;&lt;/div&gt;</description><dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">Braňo Žarnovičan</dc:creator><pubDate>Mon, 15 Feb 2016 00:00:00 +0100</pubDate><guid>tag:zarnovican.github.io,2016-02-15:2016/02/15/uwsgi-graceful-reload/</guid><category>uwsgi</category><category>python</category><category>Django</category><category>systemd</category></item><item><title>Run cloud image without cloud</title><link>http://zarnovican.github.io/2015/11/10/run-cloud-image-without-cloud/</link><description>&lt;div class="toc"&gt;
 &lt;ul&gt;
 &lt;li&gt;&lt;a href="#for-the-impatient"&gt;For the impatient&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;&lt;a href="#motivation"&gt;Motivation&lt;/a&gt;&lt;/li&gt;
