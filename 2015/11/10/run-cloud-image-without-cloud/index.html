@@ -304,10 +304,16 @@ It is even ok to share the same config drive (and UUID value) for all your VMs.<
 It is working, though.</p>
 </div>
 <p>Create the ISO image:</p>
-<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%">mkisofs -R -o config-drive.iso config-drive/
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%">mkisofs -R -V config-2 -o config-drive.iso config-drive/
 </pre></div>
 
 
+<div class="admonition warning">
+<p class="admonition-title">CoreOS is not using cloud-init</p>
+<p>They have their own boot-strapping tool, which <em>resembles</em> <code>cloud-init</code>.
+Unlike cloud-init, their tool require "config-2" filesystem
+label on config drive. Also, their "user_data" file is different.</p>
+</div>
 <h3 id="create-vm">Create VM</h3>
 <p>Time to tie it all together..</p>
 <div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%"><span style="color: #19177C">VMID</span><span style="color: #666666">=</span>1
@@ -435,6 +441,10 @@ Its config is in cloud's "user data".</p>
 
 <span style="color: #BA2121">EOF</span>
 </pre></div>
+
+
+<p><strong>Update</strong> (2016-02-19):<br />
+added note about CoreOS incompatibility with cloud-init.</p>
             </div>
             <!-- /.entry-content -->
         </article>

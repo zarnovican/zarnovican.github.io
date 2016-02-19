@@ -675,10 +675,16 @@ It is even ok to share the same config drive (and UUID value) for all your VMs.&
 It is working, though.&lt;/p&gt;
 &lt;/div&gt;
 &lt;p&gt;Create the ISO image:&lt;/p&gt;
-&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;mkisofs -R -o config-drive.iso config-drive/
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;mkisofs -R -V config-2 -o config-drive.iso config-drive/
 &lt;/pre&gt;&lt;/div&gt;
 
 
+&lt;div class="admonition warning"&gt;
+&lt;p class="admonition-title"&gt;CoreOS is not using cloud-init&lt;/p&gt;
+&lt;p&gt;They have their own boot-strapping tool, which &lt;em&gt;resembles&lt;/em&gt; &lt;code&gt;cloud-init&lt;/code&gt;.
+Unlike cloud-init, their tool require "config-2" filesystem
+label on config drive. Also, their "user_data" file is different.&lt;/p&gt;
+&lt;/div&gt;
 &lt;h3 id="create-vm"&gt;Create VM&lt;/h3&gt;
 &lt;p&gt;Time to tie it all together..&lt;/p&gt;
 &lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;&lt;span style="color: #19177C"&gt;VMID&lt;/span&gt;&lt;span style="color: #666666"&gt;=&lt;/span&gt;1
@@ -805,4 +811,8 @@ Its config is in cloud's "user data".&lt;/p&gt;
 &lt;span style="color: #BA2121"&gt;  ecdsa_public: ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBPXB7/TfSuFBehshpRzUfNspSor+9eSwWblzssXswC/hRYkzKOv6mcvuqzBCWHZFsal8+IipIlP64JglrwXwtRU=&lt;/span&gt;
 
 &lt;span style="color: #BA2121"&gt;EOF&lt;/span&gt;
-&lt;/pre&gt;&lt;/div&gt;</description><dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">Braňo Žarnovičan</dc:creator><pubDate>Tue, 10 Nov 2015 00:00:00 +0100</pubDate><guid>tag:zarnovican.github.io,2015-11-10:2015/11/10/run-cloud-image-without-cloud/</guid><category>libvirt</category><category>cloud-init</category><category>config drive</category><category>qcow2</category></item></channel></rss>
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;&lt;strong&gt;Update&lt;/strong&gt; (2016-02-19):&lt;br /&gt;
+added note about CoreOS incompatibility with cloud-init.&lt;/p&gt;</description><dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">Braňo Žarnovičan</dc:creator><pubDate>Tue, 10 Nov 2015 00:00:00 +0100</pubDate><guid>tag:zarnovican.github.io,2015-11-10:2015/11/10/run-cloud-image-without-cloud/</guid><category>libvirt</category><category>cloud-init</category><category>config drive</category><category>qcow2</category></item></channel></rss>
