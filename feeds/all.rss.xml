@@ -1,5 +1,98 @@
 <?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Braňo Žarnovičan's blog</title><link>http://zarnovican.github.io/</link><description></description><atom:link href="http://zarnovican.github.io/feeds/all.rss.xml" rel="self"></atom:link><lastBuildDate>Mon, 15 Feb 2016 00:00:00 +0100</lastBuildDate><item><title>uWSGI graceful Python code deploy</title><link>http://zarnovican.github.io/2016/02/15/uwsgi-graceful-reload/</link><description>&lt;div class="toc"&gt;
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Braňo Žarnovičan's blog</title><link>http://zarnovican.github.io/</link><description></description><atom:link href="http://zarnovican.github.io/feeds/all.rss.xml" rel="self"></atom:link><lastBuildDate>Sun, 20 May 2018 00:00:00 +0200</lastBuildDate><item><title>Why is Zoom autostarting after screen lock/unlock ?</title><link>http://zarnovican.github.io/2018/05/20/autostarting-zoom-app/</link><description>&lt;h2 id="tldr"&gt;TL;DR&lt;/h2&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;sudo sed -i &lt;span style="color: #BA2121"&gt;&amp;#39;/zoom -root/d&amp;#39;&lt;/span&gt; /usr/share/X11/app-defaults/XScreenSaver
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;.. and restart &lt;code&gt;xscreensaver&lt;/code&gt;&lt;/p&gt;
+&lt;h2 id="the-problem"&gt;The Problem&lt;/h2&gt;
+&lt;p&gt;I switched job recently. My new employer is using &lt;a href="https://zoom.us/"&gt;Zoom&lt;/a&gt;
+for video conferencing. All internal meetings are on Zoom, as well as
+any peer-to-peer talks.&lt;/p&gt;
+&lt;p&gt;Zoom is also quite resource hungry. It will stay in tray unless you exit it
+explicitly. I decided to start Zoom only when needed and shutdown after
+the meeting.&lt;/p&gt;
+&lt;p&gt;What I noticed early on, is that Zoom did auto-restart every time I left
+computer for a while. Zoom login screen was greeting me every time I unlocked
+my screen.&lt;/p&gt;
+&lt;h2 id="dead-ends"&gt;Dead Ends&lt;/h2&gt;
+&lt;p&gt;Skip this section. It's my ramblings on why it took me hours to figure it out.&lt;/p&gt;
+&lt;p&gt;First, I was looking for configuration in Zoom itself. Their Settings UI,
+and &lt;code&gt;~/.config/zoomus.conf&lt;/code&gt;. Nothing. Hmm.. maybe they insert a file at the right
+place to be auto-executed at certain events. I checked zoom rpm content,
+all pre/post-install scripts. Nothing.&lt;/p&gt;
+&lt;p&gt;Then, I focused on find &lt;em&gt;who&lt;/em&gt; is executing Zoom. It had parent id 1, so no hint there.
+I greped my whole &lt;code&gt;/etc&lt;/code&gt; and &lt;code&gt;$HOME&lt;/code&gt; for certain unique strings from zoom command-line.
+Nothing.&lt;/p&gt;
+&lt;p&gt;Then I had a brilliant idea: switch to text console after locking the computer.
+There, I noticed that zoom was forked-off from xscreensaver process.&lt;/p&gt;
+&lt;p&gt;Aaaaa.. ha!&lt;/p&gt;
+&lt;h2 id="xscreensaver"&gt;xscreensaver&lt;/h2&gt;
+&lt;p&gt;At this point, I should mention that I like my OS to be small and lean. I ditched KDE
+when it became too bloated for my taste and switched to Fedora LXDE. LXDE is by default
+using &lt;code&gt;xscreensaver&lt;/code&gt; for screen locking/unlocking. I don't need any fancy screensavers,
+so I have none installed, just black screen is fine.&lt;/p&gt;
+&lt;p&gt;So, why would &lt;code&gt;xscreensaver&lt;/code&gt; run &lt;code&gt;zoom&lt;/code&gt; app ? Is there some post-unlock hook, where Zoom
+has injected itself ?&lt;/p&gt;
+&lt;p&gt;Then I found &lt;code&gt;xscreensaver-demo&lt;/code&gt; and it hit me. Zoom is a screensaver app.&lt;/p&gt;
+&lt;p&gt;&lt;img alt="zoom-screensaver" src="http://zarnovican.github.io/static/2018/05/20/zoom-screensaver.png" /&gt;&lt;/p&gt;
+&lt;p&gt;For a while I was wandering if Zoom developers needed to be notified of lock/unlock events
+to resume some long-running meetings or such. Maybe not..&lt;/p&gt;
+&lt;p&gt;Then, I check &lt;code&gt;xscreensaver&lt;/code&gt; documentation on how to configure screen-saver apps.
+There is a file &lt;code&gt;/usr/share/X11/app-defaults/XScreenSaver&lt;/code&gt;, which among other things
+lists all available screen-saver apps&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;! You can use the `xscreensaver-demo&amp;#39; program to edit the current list of
+! screen savers interactively.
+!
+*programs:                                                                    \
+                                maze -root                                  \n\
+  GL:                           superquadrics -root                         \n\
+                                attraction -root                            \n\
+                                blitspin -root                              \n\
+...
+                                vermiculate -root                           \n\
+                                whirlwindwarp -root                         \n\
+                                zoom -root                                  \n\
+                                anemone -root                               \n\
+                                apollonian -root                            \n\
+...
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Well, apparent, in those ancient times there &lt;em&gt;was a screensaver app called zoom&lt;/em&gt; !!&lt;/p&gt;
+&lt;p&gt;Is that a list of apps that are searched on some xscreensaver-specific directory ? No!
+They are searched on your $PATH as well.&lt;/p&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;stat(&amp;quot;/usr/libexec/xscreensaver/maze&amp;quot;, 0x7ffd28e36920) = -1 ENOENT (No such file or directory)
+stat(&amp;quot;/home/zarnovic/bin/maze&amp;quot;, 0x7ffd28e36920) = -1 ENOENT (No such file or directory)
+stat(&amp;quot;/usr/lib64/qt-3.3/bin/maze&amp;quot;, 0x7ffd28e36920) = -1 ENOENT (No such file or directory)
+stat(&amp;quot;/usr/local/bin/maze&amp;quot;, 0x7ffd28e36920) = -1 ENOENT (No such file or directory)
+stat(&amp;quot;/bin/maze&amp;quot;, 0x7ffd28e36920)       = -1 ENOENT (No such file or directory)
+stat(&amp;quot;/usr/bin/maze&amp;quot;, 0x7ffd28e36920)   = -1 ENOENT (No such file or directory)
+stat(&amp;quot;/usr/local/sbin/maze&amp;quot;, 0x7ffd28e36920) = -1 ENOENT (No such file or directory)
+stat(&amp;quot;/usr/sbin/maze&amp;quot;, 0x7ffd28e36920)  = -1 ENOENT (No such file or directory)
+stat(&amp;quot;/sbin/maze&amp;quot;, 0x7ffd28e36920)      = -1 ENOENT (No such file or directory)
+stat(&amp;quot;/bin/maze&amp;quot;, 0x7ffd28e36920)       = -1 ENOENT (No such file or directory)
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;p&gt;Because Zoom has installed &lt;code&gt;zoom&lt;/code&gt; to my PATH, it became the one and only screensaver app
+(remember, I have no other screensavers installed).&lt;/p&gt;
+&lt;h2 id="the-fix"&gt;The Fix&lt;/h2&gt;
+&lt;p&gt;You can do several things to disable Zoom screensaver app:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;explicitly set blank screen, disabling screensaver apps&lt;/li&gt;
+&lt;li&gt;disable zoom by prepending "-" in the &lt;code&gt;XScreenSaver&lt;/code&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;! If you want to disable a screensaver, DO NOT remove it from this list:
+! instead, mark it as inactive by placing a &amp;quot;-&amp;quot; at the beginning of the line.
+&lt;/pre&gt;&lt;/div&gt;
+
+
+&lt;ul&gt;
+&lt;li&gt;or just delete the line altogether&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class="codehilite" style="background: #f8f8f8"&gt;&lt;pre style="line-height: 125%"&gt;sudo sed -i &lt;span style="color: #BA2121"&gt;&amp;#39;/zoom -root/d&amp;#39;&lt;/span&gt; /usr/share/X11/app-defaults/XScreenSaver
+&lt;/pre&gt;&lt;/div&gt;</description><dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">Braňo Žarnovičan</dc:creator><pubDate>Sun, 20 May 2018 00:00:00 +0200</pubDate><guid>tag:zarnovican.github.io,2018-05-20:2018/05/20/autostarting-zoom-app/</guid><category>zoom</category><category>autostart</category><category>xscreensaver</category><category>lock</category><category>unlock</category></item><item><title>uWSGI graceful Python code deploy</title><link>http://zarnovican.github.io/2016/02/15/uwsgi-graceful-reload/</link><description>&lt;div class="toc"&gt;
 &lt;ul&gt;
 &lt;li&gt;&lt;a href="#pre-fork-vs-lazy-app"&gt;Pre-fork vs Lazy-app&lt;/a&gt;&lt;/li&gt;
 &lt;li&gt;&lt;a href="#emperor-mode"&gt;Emperor mode&lt;/a&gt;&lt;/li&gt;
