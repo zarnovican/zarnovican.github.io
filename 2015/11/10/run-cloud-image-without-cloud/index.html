@@ -201,15 +201,25 @@ sudo virsh net-edit default
 </pre></div>
 
 
-<p>Snippet that should be added inside <code>&lt;dhcp&gt;</code> tag (I'm assuming that your default network
-has the same range as mine - 192.168.122.0/24):</p>
-<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%"><span style="color: #008000; font-weight: bold">&lt;dhcp&gt;</span>
+<p>Set DHCP DNS domain with <code>&lt;domain&gt;</code> tag. Add one static <code>&lt;host ../&gt;</code> entry for each VM
+under <code>&lt;dhcp&gt;</code> tag (I'm assuming that your default network has the same range as mine - 192.168.122.0/24):</p>
+<div class="codehilite" style="background: #f8f8f8"><pre style="line-height: 125%"><span style="color: #008000; font-weight: bold">&lt;network&gt;</span>
   ...
-  <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:11&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm1&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.11&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
-  <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:12&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm2&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.12&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
-  <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:13&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm3&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.13&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
-  <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:14&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm4&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.14&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
-<span style="color: #008000; font-weight: bold">&lt;/dhcp&gt;</span>
+  <span style="color: #008000; font-weight: bold">&lt;domain</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;local&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+  <span style="color: #008000; font-weight: bold">&lt;ip</span> <span style="color: #7D9029">address=</span><span style="color: #BA2121">&#39;192.168.122.1&#39;</span> <span style="color: #7D9029">netmask=</span><span style="color: #BA2121">&#39;255.255.255.0&#39;</span><span style="color: #008000; font-weight: bold">&gt;</span>
+    <span style="color: #008000; font-weight: bold">&lt;dhcp&gt;</span>
+      <span style="color: #008000; font-weight: bold">&lt;range</span> <span style="color: #7D9029">start=</span><span style="color: #BA2121">&#39;192.168.122.2&#39;</span> <span style="color: #7D9029">end=</span><span style="color: #BA2121">&#39;192.168.122.254&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+      <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:11&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm1&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.11&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+      <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:12&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm2&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.12&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+      <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:13&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm3&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.13&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+      <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:14&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm4&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.14&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+      <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:15&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm5&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.15&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+      <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:16&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm6&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.16&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+      <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:17&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm7&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.17&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+      <span style="color: #008000; font-weight: bold">&lt;host</span> <span style="color: #7D9029">mac=</span><span style="color: #BA2121">&#39;52:54:00:00:00:18&#39;</span> <span style="color: #7D9029">name=</span><span style="color: #BA2121">&#39;vm8&#39;</span> <span style="color: #7D9029">ip=</span><span style="color: #BA2121">&#39;192.168.122.18&#39;</span><span style="color: #008000; font-weight: bold">/&gt;</span>
+    <span style="color: #008000; font-weight: bold">&lt;/dhcp&gt;</span>
+  <span style="color: #008000; font-weight: bold">&lt;/ip&gt;</span>
+<span style="color: #008000; font-weight: bold">&lt;/network&gt;</span>
 </pre></div>
 
 
@@ -443,8 +453,10 @@ Its config is in cloud's "user data".</p>
 </pre></div>
 
 
-<p><strong>Update</strong> (2016-02-19):<br />
+<p><strong>Update</strong> (2016-02-19):
 added note about CoreOS incompatibility with cloud-init.</p>
+<p><strong>Update</strong> (2018-12-25):
+added <code>&lt;domain&gt;</code> tag to network config to fix issue with <code>systemd-resolved</code>.</p>
             </div>
             <!-- /.entry-content -->
         </article>
